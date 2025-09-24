@@ -10,3 +10,4 @@ git clone --depth 1 --branch swift-5.10.1-RELEASE-CustomDevelopments https://git
 cd "swift"
 
 ./utils/update-checkout --tag swift-5.10.1-RELEASE --clone
+git checkout swift-5.10.1-RELEASE-CustomDevelopments
