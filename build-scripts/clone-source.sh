@@ -7,6 +7,6 @@ export LANG=en_US.UTF-8
 
 git clone --depth 1 --branch swift-5.10.1-RELEASE-CustomDevelopments https://github.com/yusufozgul/swift swift
 
-cd "$SWIFT_SOURCE_DIR"
+cd "swift"
 
 ./utils/update-checkout --tag swift-5.10.1-RELEASE --clone
