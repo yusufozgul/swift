@@ -6,7 +6,7 @@ export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 
 START_TIME=$(date +%s)
-WORK_DIR="~/Documents/swift-build"
+WORK_DIR="$HOME/Documents/swift-build"
 SWIFT_SOURCE_DIR="$WORK_DIR/swift"
 INSTALL_DIR="$WORK_DIR/../swift-nightly-install"
 PACKAGE_DIR="$WORK_DIR/../swift-swift-5.10.1-RELEASE"
