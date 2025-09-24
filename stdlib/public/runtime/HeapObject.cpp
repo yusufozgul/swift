@@ -273,6 +273,21 @@ static HeapObject *_swift_allocObject_(HeapMetadata const *metadata,
   SWIFT_LEAKS_START_TRACKING_OBJECT(object);
 
   SWIFT_RT_TRACK_INVOCATION(object, swift_allocObject);
+  
+  // Log class initialization
+  if (metadata->getKind() == MetadataKind::Class) {
+    auto classMetadata = static_cast<const ClassMetadata*>(metadata);
+    const char* className = "UnknownClass";
+    
+    // Try to get class name from metadata
+    if (auto description = classMetadata->getDescription()) {
+      if (auto name = description->Name.get()) {
+        className = name;
+      }
+    }
+    
+    fprintf(stderr, "[SWIFT_CLASS_INIT] %s initialized\n", className);
+  }
 
   return object;
 }
