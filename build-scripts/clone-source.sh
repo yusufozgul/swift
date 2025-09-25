@@ -5,6 +5,7 @@ set -u
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 
+rm -rf "$HOME/Documents/swift-build" || true
 mkdir -p "$HOME/Documents/swift-build" || true
 cd "$HOME/Documents/swift-build"
 
