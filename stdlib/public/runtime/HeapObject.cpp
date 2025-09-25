@@ -840,6 +840,21 @@ void swift::swift_unownedCheck(HeapObject *object) {
 }
 
 void _swift_release_dealloc(HeapObject *object) {
+  // Log class deinitialization
+  if (object->metadata->getKind() == MetadataKind::Class) {
+    auto classMetadata = static_cast<const ClassMetadata*>(object->metadata);
+    const char* className = "UnknownClass";
+
+    // Try to get class name from metadata
+    if (auto description = classMetadata->getDescription()) {
+      if (auto name = description->Name.get()) {
+        className = name;
+      }
+    }
+
+    fprintf(stderr, "[SWIFT_CLASS_DEINIT] %s deinitialized\n", className);
+  }
+
   asFullMetadata(object->metadata)->destroy(object);
 }
 
