@@ -6,8 +6,11 @@ export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+echo >> $HOME/.zprofile
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $HOME/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
 
-mkdir ~/Downloads/CMake
+mkdir -p $HOME/Downloads/CMake
 curl --location --retry 3 "https://github.com/Kitware/CMake/releases/download/v3.30.9/cmake-3.30.9-macos-universal.dmg" --output ~/Downloads/CMake/cmake-macos.dmg
 yes | PAGER=cat hdiutil attach -quiet -mountpoint /Volumes/cmake-macos ~/Downloads/CMake/cmake-macos.dmg
 cp -R /Volumes/cmake-macos/CMake.app /Applications/
@@ -16,5 +19,5 @@ sudo "/Applications/CMake.app/Contents/bin/cmake-gui" --install=/usr/local/bin
 cmake --version
 
 brew install ninja sccache distcc python3 git lld
-mkdir -p ~/.distcc
-echo "localhost,cpp,lzo" > ~/.distcc/hosts
+mkdir -p $HOME/.distcc
+echo "localhost,cpp,lzo" > $HOME/.distcc/hosts

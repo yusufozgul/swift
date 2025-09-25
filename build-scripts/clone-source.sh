@@ -5,8 +5,8 @@ set -u
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 
-mkdir -p "~/Documents/swift-build"
-cd "~/Documents/swift-build"
+mkdir -p "$HOME/Documents/swift-build"
+cd "$HOME/Documents/swift-build"
 
 git clone --depth 1 --branch swift-6.1.2-RELEASE-CustomDevelopments https://github.com/yusufozgul/swift swift
 
