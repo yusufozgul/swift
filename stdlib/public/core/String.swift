@@ -374,6 +374,10 @@ public struct String {
   @inlinable @inline(__always)
   @_semantics("string.init_empty")
   public init() { self.init(_StringGuts()) }
+
+  public init(yusuf: String) {
+    self.init("[yusuf]" + yusuf)
+  }
 }
 
 extension String: Sendable { }
