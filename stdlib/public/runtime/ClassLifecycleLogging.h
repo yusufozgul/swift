@@ -9,8 +9,10 @@ namespace swift {
 struct ClassLifecycleStats {
   unsigned long initCount;
   unsigned long deinitCount;
+  bool isDiscovered;
+  bool isEverUsed;
   
-  ClassLifecycleStats() : initCount(0), deinitCount(0) {}
+  ClassLifecycleStats() : initCount(0), deinitCount(0), isDiscovered(true), isEverUsed(false) {}
 };
 
 /// Log class lifecycle events (initialization and deinitialization)
@@ -19,11 +21,6 @@ struct ClassLifecycleStats {
 /// \param metadata The metadata of the class being logged
 /// \param event The lifecycle event ("INIT" or "DEINIT")
 void logClassLifecycle(const HeapMetadata *metadata, const char* event);
-
-/// Manually write class lifecycle statistics to file.
-/// Call this from AppDelegate's applicationWillTerminate or similar.
-/// This allows you to control exactly when statistics are written.
-void writeClassLifecycleStatisticsNow();
 
 } // namespace swift
 
