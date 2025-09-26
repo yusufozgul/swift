@@ -18,10 +18,11 @@
 
 using namespace swift;
 
-namespace {
-// Forward declarations
+// Forward declarations for functions used across namespaces
 static void enumerateAllClassesInTarget();
 static void writeClassLifecycleStatisticsNow();
+
+namespace {
 
 std::unordered_map<std::string, ClassLifecycleStats> *classStatsMap = nullptr;
 std::mutex *classStatsMapMutex = nullptr;
@@ -36,42 +37,38 @@ std::string getOutputFilePath() {
   return "swift_class_lifecycle_stats.csv";
 }
 
-void initializeTrackingOnFirstUse() {
-  fprintf(stderr, "[YSWIFT] initializeTrackingOnFirstUse called\n");
-
-  if (trackingInitialized.exchange(true))
-    return;
-
-  classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
-  classStatsMapMutex = new std::mutex();
-
-  trackingQueue = dispatch_queue_create(
-      "com.swift.runtime.class_lifecycle_tracking", DISPATCH_QUEUE_SERIAL);
-
-  fprintf(stderr, "[YSWIFT] Enumerating all classes in iOS Simulator target...\n");
-  enumerateAllClassesInTarget();
-
-  dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, 
-                                                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0));
-  dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), 
-                           5 * NSEC_PER_SEC, 1 * NSEC_PER_SEC);
-  dispatch_source_set_event_handler(timer, ^{
-    fprintf(stderr, "[YSWIFT] *** Timer fired, writing stats ***\n");
-    writeClassLifecycleStatisticsNow();
-  });
-  dispatch_resume(timer);
-  
-  atexit([]() {
-    fprintf(stderr, "[YSWIFT] *** App terminating, final stats write ***\n");
-    writeClassLifecycleStatisticsNow();
-  });
-}
 } // namespace
 
 void swift::logClassLifecycle(const HeapMetadata *metadata, const char *event) {
   if (!trackingInitialized.load()) {
     fprintf(stderr, "[YSWIFT] Initializing tracking on first use\n");
-    initializeTrackingOnFirstUse();
+    
+    if (trackingInitialized.exchange(true))
+      return;
+
+    classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
+    classStatsMapMutex = new std::mutex();
+
+    trackingQueue = dispatch_queue_create(
+        "com.swift.runtime.class_lifecycle_tracking", DISPATCH_QUEUE_SERIAL);
+
+    fprintf(stderr, "[YSWIFT] Enumerating all classes in iOS Simulator target...\n");
+    enumerateAllClassesInTarget();
+
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, 
+                                                     dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0));
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), 
+                             5 * NSEC_PER_SEC, 1 * NSEC_PER_SEC);
+    dispatch_source_set_event_handler(timer, ^{
+      fprintf(stderr, "[YSWIFT] *** Timer fired, writing stats ***\n");
+      writeClassLifecycleStatisticsNow();
+    });
+    dispatch_resume(timer);
+    
+    atexit([]() {
+      fprintf(stderr, "[YSWIFT] *** App terminating, final stats write ***\n");
+      writeClassLifecycleStatisticsNow();
+    });
   }
 
   if (metadata->getKind() != MetadataKind::Class)
