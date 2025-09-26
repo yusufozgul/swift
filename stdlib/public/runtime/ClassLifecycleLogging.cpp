@@ -1,5 +1,4 @@
 #include "ClassLifecycleLogging.h"
-#include "swift/Runtime/Metadata.h"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>

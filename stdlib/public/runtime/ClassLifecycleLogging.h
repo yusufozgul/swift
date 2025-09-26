@@ -1,9 +1,9 @@
 #ifndef SWIFT_RUNTIME_CLASSLIFECYCLELOGGING_H
 #define SWIFT_RUNTIME_CLASSLIFECYCLELOGGING_H
 
-namespace swift {
+#include "swift/Runtime/Metadata.h"
 
-struct HeapMetadata;
+namespace swift {
 
 /// Statistics for a single class
 struct ClassLifecycleStats {
