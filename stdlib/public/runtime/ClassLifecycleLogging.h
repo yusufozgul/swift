@@ -20,6 +20,11 @@ struct ClassLifecycleStats {
 /// \param event The lifecycle event ("INIT" or "DEINIT")
 void logClassLifecycle(const HeapMetadata *metadata, const char* event);
 
+/// Manually write class lifecycle statistics to file.
+/// Call this from AppDelegate's applicationWillTerminate or similar.
+/// This allows you to control exactly when statistics are written.
+void writeClassLifecycleStatisticsNow();
+
 } // namespace swift
 
 #endif // SWIFT_RUNTIME_CLASSLIFECYCLELOGGING_H
