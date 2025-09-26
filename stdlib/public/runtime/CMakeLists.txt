@@ -38,6 +38,7 @@ set(swift_runtime_sources
     Bincompat.cpp
     BytecodeLayouts.cpp
     Casting.cpp
+    ClassLifecycleLogging.cpp
     CrashReporter.cpp
     Demangle.cpp
     DynamicCast.cpp
