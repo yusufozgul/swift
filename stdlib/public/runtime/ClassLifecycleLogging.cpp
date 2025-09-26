@@ -19,6 +19,10 @@
 using namespace swift;
 
 namespace {
+// Forward declarations
+static void enumerateAllClassesInTarget();
+static void writeClassLifecycleStatisticsNow();
+
 std::unordered_map<std::string, ClassLifecycleStats> *classStatsMap = nullptr;
 std::mutex *classStatsMapMutex = nullptr;
 std::atomic<bool> trackingInitialized{false};
