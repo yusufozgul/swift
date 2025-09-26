@@ -36,6 +36,23 @@ void initializeTrackingOnFirstUse() {
 
   trackingQueue = dispatch_queue_create(
       "com.swift.runtime.class_lifecycle_tracking", DISPATCH_QUEUE_SERIAL);
+
+  // Basit timer ile periyodik yaz (her 10 saniyede bir)
+  dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, 
+                                                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0));
+  dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), 
+                           10 * NSEC_PER_SEC, 1 * NSEC_PER_SEC);
+  dispatch_source_set_event_handler(timer, ^{
+    fprintf(stderr, "[YSWIFT] *** Timer fired, writing stats ***\n");
+    swift::writeClassLifecycleStatisticsNow();
+  });
+  dispatch_resume(timer);
+  
+  // App terminate edilirse de yaz
+  atexit([]() {
+    fprintf(stderr, "[YSWIFT] *** App terminating, final stats write ***\n");
+    swift::writeClassLifecycleStatisticsNow();
+  });
 }
 } // namespace
 
