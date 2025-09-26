@@ -143,7 +143,6 @@ static void writeClassLifecycleStatisticsNow() {
     // CSV Header
     outFile << "# Swift Class Lifecycle Statistics (iOS Simulator)\n";
     outFile << "# Target: iOS Simulator Application Classes Only\n";
-    outFile << "# Generated at: " << __DATE__ << " " << __TIME__ << "\n";
     outFile << "#\n";
     outFile << "ClassName,InitCount,DeinitCount,IsUsed,HasLeak,LeakCount,Status\n";
 
@@ -253,7 +252,7 @@ static void enumerateAllClassesInTarget() {
       const char *className = class_getName(cls);
       
       if (className) {
-        bool isSystemClass = (className[0] == '_' || strstr(className, "__") != nullptr;);
+         bool isSystemClass = (className[0] == '_' || strstr(className, "__") != nullptr);
         
         if (!isSystemClass) {
           std::string classNameStr(className);
