@@ -142,7 +142,7 @@ static bool isAppClass(Class cls) {
   if (!imageName)
     return false;
 
-  static const char *appName = getenv("SWIFT_APP_NAME") ?: "Trendyol";
+  static const char *appName = getenv("SWIFT_APP_NAME");
   char pattern[256];
   snprintf(pattern, sizeof(pattern), "%s.app/", appName);
   return strstr(imageName, pattern) && !strstr(imageName, "/Frameworks/");
@@ -154,7 +154,7 @@ static void enumerateAllClassesInTarget() {
 
   std::unordered_set<std::string> discoveredClassesSet;
   discoveredClassesSet.reserve(1024);
-  const char *appName = getenv("SWIFT_APP_NAME") ?: "Trendyol";
+  const char *appName = getenv("SWIFT_APP_NAME");
   fprintf(stderr, "[YSWIFT] Scanning for %s.app classes\n", appName);
 
   unsigned int numClasses = 0;
@@ -181,5 +181,5 @@ static void enumerateAllClassesInTarget() {
     discoveredClasses->insert(className);
   }
 
-  fprintf(stderr, "[YSWIFT] Found %zu app classes\n", discoveredClasses.size());
+  fprintf(stderr, "[YSWIFT] Found %zu app classes\n", discoveredClasses->size());
 }
