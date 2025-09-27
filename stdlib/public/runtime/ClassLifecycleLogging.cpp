@@ -1,119 +1,66 @@
 #include "ClassLifecycleLogging.h"
+#include "swift/Runtime/Metadata.h"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <dispatch/dispatch.h>
 #include <fstream>
-#include <iomanip>
 #include <mutex>
+#include <objc/runtime.h>
 #include <string>
 #include <unordered_map>
-#include <set>
-
-#include "swift/Runtime/Metadata.h"
-#if SWIFT_OBJC_INTEROP
-#include <objc/runtime.h>
-#endif
+#include <unordered_set>
 
 using namespace swift;
 
-// Forward declarations for functions used across namespaces
 static void enumerateAllClassesInTarget();
 static void writeClassLifecycleStatisticsNow();
 
 namespace {
-
 std::unordered_map<std::string, ClassLifecycleStats> *classStatsMap = nullptr;
+std::unordered_set<std::string> *discoveredClasses = nullptr;
 std::mutex *classStatsMapMutex = nullptr;
 std::atomic<bool> trackingInitialized{false};
 dispatch_queue_t trackingQueue = nullptr;
-
-std::string getOutputFilePath() {
-  const char *envPath = getenv("SWIFT_CLASS_STATS_OUTPUT");
-  if (envPath && strlen(envPath) > 0) {
-    return std::string(envPath);
-  }
-  return "swift_class_lifecycle_stats.csv";
-}
-
 } // namespace
+
+static void initializeTracking() {
+  fprintf(stderr, "[YSWIFT] Initializing tracking on first use\n");
+  
+  classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
+  discoveredClasses = new std::unordered_set<std::string>();
+  classStatsMapMutex = new std::mutex();
+  trackingQueue = dispatch_queue_create("com.swift.runtime.class_lifecycle_tracking", DISPATCH_QUEUE_SERIAL);
+
+  fprintf(stderr, "[YSWIFT] Enumerating all classes in iOS Simulator target...\n");
+  enumerateAllClassesInTarget();
+
+  dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, 
+                                                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0));
+  dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), 
+                           30 * NSEC_PER_SEC, 5 * NSEC_PER_SEC);
+  dispatch_source_set_event_handler(timer, ^{
+    fprintf(stderr, "[YSWIFT] *** Timer fired, writing stats ***\n");
+    writeClassLifecycleStatisticsNow();
+  });
+  dispatch_resume(timer);
+}
 
 void swift::logClassLifecycle(const HeapMetadata *metadata, const char *event) {
   if (!trackingInitialized.load()) {
-    fprintf(stderr, "[YSWIFT] Initializing tracking on first use\n");
-    
-    if (trackingInitialized.exchange(true))
-      return;
-
-    classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
-    classStatsMapMutex = new std::mutex();
-
-    trackingQueue = dispatch_queue_create(
-        "com.swift.runtime.class_lifecycle_tracking", DISPATCH_QUEUE_SERIAL);
-
-    fprintf(stderr, "[YSWIFT] Enumerating all classes in iOS Simulator target...\n");
-    enumerateAllClassesInTarget();
-
-    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, 
-                                                     dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0));
-    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), 
-                             5 * NSEC_PER_SEC, 1 * NSEC_PER_SEC);
-    dispatch_source_set_event_handler(timer, ^{
-      fprintf(stderr, "[YSWIFT] *** Timer fired, writing stats ***\n");
-      writeClassLifecycleStatisticsNow();
-    });
-    dispatch_resume(timer);
-    
-    atexit([]() {
-      fprintf(stderr, "[YSWIFT] *** App terminating, final stats write ***\n");
-      writeClassLifecycleStatisticsNow();
-    });
+    if (trackingInitialized.exchange(true)) return;
+    initializeTracking();
   }
 
-  if (metadata->getKind() != MetadataKind::Class)
-    return;
+  if (metadata->getKind() != MetadataKind::Class) return;
+  auto name = static_cast<const ClassMetadata *>(metadata)->getDescription()->Name.get();
+  if (!name || !discoveredClasses || discoveredClasses->find(name) == discoveredClasses->end()) return;
 
-  auto classMetadata = static_cast<const ClassMetadata *>(metadata);
-  auto description = classMetadata->getDescription();
-  if (!description)
-    return;
-
-  auto name = description->Name.get();
-  if (!name)
-    return;
-  if (name[0] == '_' || strchr(name, '.') != nullptr)
-    return;
-
-  char *classNameCopy = strdup(name);
-  char *eventCopy = strdup(event);
-
-  dispatch_async(trackingQueue, ^{
-    if (!classStatsMap || !classStatsMapMutex) {
-      free(classNameCopy);
-      free(eventCopy);
-      return;
-    }
-
-    std::string className(classNameCopy);
-
-    {
-      std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-      auto &stats = (*classStatsMap)[className];
-
-      if (strcmp(eventCopy, "INIT") == 0) {
-        stats.initCount++;
-        stats.isEverUsed = true;
-      } else if (strcmp(eventCopy, "DEINIT") == 0) {
-        stats.deinitCount++;
-        stats.isEverUsed = true;
-      }
-    }
-
-    // Clean up allocated memory
-    free(classNameCopy);
-    free(eventCopy);
-  });
+  std::lock_guard<std::mutex> lock(*classStatsMapMutex);
+  auto &stats = (*classStatsMap)[name];
+  if (event[0] == 'I') { stats.initCount++; stats.isEverUsed = true; }
+  else if (event[0] == 'D') { stats.deinitCount++; stats.isEverUsed = true; }
 }
 
 static void writeClassLifecycleStatisticsNow() {
@@ -125,7 +72,6 @@ static void writeClassLifecycleStatisticsNow() {
     return;
   }
 
-  // Wait for all background operations to complete before writing file
   dispatch_sync(trackingQueue, ^{
     std::lock_guard<std::mutex> lock(*classStatsMapMutex);
 
@@ -133,111 +79,107 @@ static void writeClassLifecycleStatisticsNow() {
       return;
     }
 
-    std::string outputPath = getOutputFilePath();
-
+    const char *envPath = getenv("SWIFT_CLASS_STATS_OUTPUT");
+    std::string outputPath = envPath && strlen(envPath) > 0 ? std::string(envPath) : "swift_class_lifecycle_stats.csv";
     std::ofstream outFile(outputPath);
 
     if (!outFile.is_open()) {
       return;
     }
 
-    // CSV Header
-    outFile << "ClassName,InitCount,DeinitCount,IsUsed,HasLeak,LeakCount,Status\n";
+    std::string csvContent;
+    csvContent.reserve(classStatsMap->size() * 150);
+    csvContent += "ClassName,InitCount,DeinitCount,IsUsed,HasLeak,LeakCount,Status\n";
 
     for (const auto &entry : *classStatsMap) {
       const std::string &className = entry.first;
       const ClassLifecycleStats &stats = entry.second;
 
-      // CSV format: ClassName,InitCount,DeinitCount,IsUsed,HasLeak,LeakCount,Status
-      outFile << "\"" << className << "\"," 
-              << stats.initCount << ","
-              << stats.deinitCount << ","
-              << (stats.isEverUsed ? "TRUE" : "FALSE") << ",";
+      csvContent += "\"";
+      csvContent += className;
+      csvContent += "\",";
+      csvContent += std::to_string(stats.initCount);
+      csvContent += ",";
+      csvContent += std::to_string(stats.deinitCount);
+      csvContent += ",";
+      csvContent += (stats.isEverUsed ? "TRUE" : "FALSE");
+      csvContent += ",";
 
-      // Memory leak detection
       bool hasLeak = (stats.initCount != stats.deinitCount) && stats.isEverUsed;
-      long leakCount = hasLeak ? (static_cast<long>(stats.initCount) - static_cast<long>(stats.deinitCount)) : 0;
-      
-      outFile << (hasLeak ? "TRUE" : "FALSE") << ","
-              << leakCount << ",";
+      long leakCount = hasLeak ? (static_cast<long>(stats.initCount) -
+                                  static_cast<long>(stats.deinitCount))
+                               : 0;
 
-      // Status column
+      csvContent += (hasLeak ? "TRUE" : "FALSE");
+      csvContent += ",";
+      csvContent += std::to_string(leakCount);
+      csvContent += ",";
+
       if (!stats.isEverUsed) {
-        outFile << "UNUSED";
+        csvContent += "UNUSED";
       } else if (hasLeak) {
-        outFile << "LEAK";
+        csvContent += "LEAK";
       } else {
-        outFile << "OK";
+        csvContent += "OK";
       }
 
-      outFile << "\n";
+      csvContent += "\n";
     }
 
-    // Calculate statistics
-    size_t totalClasses = classStatsMap->size();
-    size_t usedClasses = 0;
-    size_t unusedClasses = 0;
-    size_t classesWithLeaks = 0;
-    
-    for (const auto &entry : *classStatsMap) {
-      const ClassLifecycleStats &stats = entry.second;
-      if (stats.isEverUsed) {
-        usedClasses++;
-        if (stats.initCount != stats.deinitCount) {
-          classesWithLeaks++;
-        }
-      } else {
-        unusedClasses++;
-      }
-    }
-    
+    outFile << csvContent;
     outFile.close();
-
     fprintf(stderr,
             "[YSWIFT] *** CLASS LIFECYCLE STATISTICS WRITTEN TO: %s ***\n",
             outputPath.c_str());
   });
 }
 
-static void enumerateAllClassesInTarget() {
-  if (!classStatsMap || !classStatsMapMutex) {
-    return;
-  }
+static bool isAppClass(Class cls) {
+  if (!cls)
+    return false;
 
-  std::set<std::string> discoveredClasses;
-  fprintf(stderr, "[YSWIFT] Using objc_copyClassList for iOS Simulator...\n");
-  
+  const char *imageName = class_getImageName(cls);
+  if (!imageName)
+    return false;
+
+  static const char *appName = getenv("SWIFT_APP_NAME") ?: "Trendyol";
+  char pattern[256];
+  snprintf(pattern, sizeof(pattern), "%s.app/", appName);
+  return strstr(imageName, pattern) && !strstr(imageName, "/Frameworks/");
+}
+
+static void enumerateAllClassesInTarget() {
+  if (!classStatsMap || !classStatsMapMutex)
+    return;
+
+  std::unordered_set<std::string> discoveredClassesSet;
+  discoveredClassesSet.reserve(1024);
+  const char *appName = getenv("SWIFT_APP_NAME") ?: "Trendyol";
+  fprintf(stderr, "[YSWIFT] Scanning for %s.app classes\n", appName);
+
   unsigned int numClasses = 0;
   Class *classes = objc_copyClassList(&numClasses);
-  
+
   if (classes) {
-    fprintf(stderr, "[YSWIFT] Found %u total classes in runtime\n", numClasses);
-    
     for (unsigned int i = 0; i < numClasses; i++) {
       Class cls = classes[i];
       const char *className = class_getName(cls);
-      
-      if (className) {
-         bool isSystemClass = (className[0] == '_' || strstr(className, "__") != nullptr);
-        
-        if (!isSystemClass) {
-          std::string classNameStr(className);
-          discoveredClasses.insert(classNameStr);
-        }
+
+      if (className && isAppClass(cls)) {
+        discoveredClassesSet.emplace(className);
       }
     }
-    
     free(classes);
   }
 
-  {
-    std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-    
-    for (const auto &className : discoveredClasses) {
-      auto &stats = (*classStatsMap)[className];
-      stats.isDiscovered = true;
-    }
-    
-    fprintf(stderr, "[YSWIFT] Total application classes discovered: %zu\n", discoveredClasses.size());
+  std::lock_guard<std::mutex> lock(*classStatsMapMutex);
+  classStatsMap->reserve(discoveredClassesSet.size());
+  discoveredClasses->reserve(discoveredClassesSet.size());
+  
+  for (const auto &className : discoveredClassesSet) {
+    (*classStatsMap)[className].isDiscovered = true;
+    discoveredClasses->insert(className);
   }
+
+  fprintf(stderr, "[YSWIFT] Found %zu app classes\n", discoveredClasses.size());
 }
