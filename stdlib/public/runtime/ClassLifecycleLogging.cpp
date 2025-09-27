@@ -12,10 +12,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-// Forward declaration for nameForMetadata function
-namespace swift {
-  std::string nameForMetadata(const Metadata *type, bool qualified = false);
-}
 
 using namespace swift;
 
