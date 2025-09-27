@@ -142,9 +142,6 @@ static void writeClassLifecycleStatisticsNow() {
     }
 
     // CSV Header
-    outFile << "# Swift Class Lifecycle Statistics (iOS Simulator)\n";
-    outFile << "# Target: iOS Simulator Application Classes Only\n";
-    outFile << "#\n";
     outFile << "ClassName,InitCount,DeinitCount,IsUsed,HasLeak,LeakCount,Status\n";
 
     for (const auto &entry : *classStatsMap) {
@@ -194,36 +191,6 @@ static void writeClassLifecycleStatisticsNow() {
       }
     }
     
-    // Summary section as CSV comments and data
-    outFile << "#\n";
-    outFile << "# === SUMMARY (iOS Simulator) ===\n";
-    outFile << "# Total application classes discovered: " << totalClasses << "\n";
-    outFile << "# Used classes: " << usedClasses << "\n";
-    outFile << "# Unused classes: " << unusedClasses << "\n";
-    outFile << "# Classes with memory leaks: " << classesWithLeaks << "\n";
-    
-    if (totalClasses > 0) {
-      double usageRate = (double)usedClasses / totalClasses * 100.0;
-      outFile << "# Usage rate: " << std::fixed << std::setprecision(1) << usageRate << "%\n";
-    }
-    
-    outFile << "#\n";
-    outFile << "# Note: System classes (UIKit, Foundation, etc.) are filtered out.\n";
-    outFile << "# Only your application's Swift classes are tracked.\n";
-    outFile << "#\n";
-    
-    // Summary as additional CSV data for easy processing
-    outFile << "\n# Summary Data (for easy parsing)\n";
-    outFile << "Metric,Value\n";
-    outFile << "\"Total Classes\"," << totalClasses << "\n";
-    outFile << "\"Used Classes\"," << usedClasses << "\n";
-    outFile << "\"Unused Classes\"," << unusedClasses << "\n";
-    outFile << "\"Classes With Leaks\"," << classesWithLeaks << "\n";
-    
-    if (totalClasses > 0) {
-      double usageRate = (double)usedClasses / totalClasses * 100.0;
-      outFile << "\"Usage Rate %\"," << std::fixed << std::setprecision(1) << usageRate << "\n";
-    }
     outFile.close();
 
     fprintf(stderr,
