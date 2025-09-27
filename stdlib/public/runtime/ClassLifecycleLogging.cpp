@@ -12,6 +12,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
+// Forward declaration for nameForMetadata function
+namespace swift {
+  std::string nameForMetadata(const Metadata *type, bool qualified = false);
+}
+
 using namespace swift;
 
 static void enumerateAllClassesInTarget();
@@ -54,11 +59,19 @@ void swift::logClassLifecycle(const HeapMetadata *metadata, const char *event) {
   }
 
   if (metadata->getKind() != MetadataKind::Class) return;
-  auto name = static_cast<const ClassMetadata *>(metadata)->getDescription()->Name.get();
-  if (!name || !discoveredClasses || discoveredClasses->find(name) == discoveredClasses->end()) return;
+  
+  // Get the qualified (full module) name from metadata
+  std::string qualifiedName = nameForMetadata(metadata, true);
+  if (qualifiedName.empty() || !discoveredClasses) return;
 
   std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-  auto &stats = (*classStatsMap)[name];
+  
+  // Check if this qualified name is in our discovered classes
+  if (discoveredClasses->find(qualifiedName) == discoveredClasses->end()) {
+    return; // Class not found in discovered classes
+  }
+
+  auto &stats = (*classStatsMap)[qualifiedName];
   if (event[0] == 'I') { stats.initCount++; stats.isEverUsed = true; }
   else if (event[0] == 'D') { stats.deinitCount++; stats.isEverUsed = true; }
 }
