@@ -205,8 +205,6 @@ static void enumerateAllClassesInTarget() {
   }
 
   std::set<std::string> discoveredClasses;
-
-#if SWIFT_OBJC_INTEROP
   fprintf(stderr, "[YSWIFT] Using objc_copyClassList for iOS Simulator...\n");
   
   unsigned int numClasses = 0;
@@ -225,18 +223,12 @@ static void enumerateAllClassesInTarget() {
         if (!isSystemClass) {
           std::string classNameStr(className);
           discoveredClasses.insert(classNameStr);
-          fprintf(stderr, "[YSWIFT] Discovered class: %s\n", classNameStr.c_str());
         }
       }
     }
     
     free(classes);
-  } else {
-    fprintf(stderr, "[YSWIFT] Failed to get class list from Objective-C runtime\n");
   }
-#else
-  fprintf(stderr, "[YSWIFT] Warning: SWIFT_OBJC_INTEROP not available - limited class discovery\n");
-#endif
 
   {
     std::lock_guard<std::mutex> lock(*classStatsMapMutex);
