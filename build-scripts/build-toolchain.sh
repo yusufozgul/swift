@@ -8,11 +8,13 @@ export LANG=en_US.UTF-8
 START_TIME=$(date +%s)
 WORK_DIR="$HOME/Documents/swift-build"
 SWIFT_SOURCE_DIR="$WORK_DIR/swift"
+INSTALL_DIR="$WORK_DIR/../swift-nightly-install"
 PACKAGE_DIR="$WORK_DIR/../swift-swift-6.1.2-RELEASE"
 
 sccache --start-server || true
 
 mkdir -p "$WORK_DIR"
+mkdir -p "$INSTALL_DIR"
 mkdir -p "$PACKAGE_DIR"
 mkdir -p "$WORK_DIR/symbols"
 cd "$SWIFT_SOURCE_DIR"
@@ -27,6 +29,7 @@ fi
     --sccache \
     --preset-file=$TEMP_PRESET_FILE \
     --preset="buildbot_osx_package,no_test" \
+    install_destdir="$INSTALL_DIR" \
     install_prefix="swift-LOCAL-a.xctoolchain/usr" \
     install_symroot="$WORK_DIR/symbols" \
     symbols_package="$PACKAGE_DIR/swift-LOCAL-a-osx-symbols.tar.gz" \
