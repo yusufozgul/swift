@@ -8,10 +8,10 @@
 #include <fstream>
 #include <mutex>
 #include <objc/runtime.h>
+#import <Foundation/Foundation.h>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-
 
 using namespace swift;
 
@@ -68,8 +68,8 @@ void swift::logClassLifecycle(const HeapMetadata *metadata, const char *event) {
   }
 
   auto &stats = (*classStatsMap)[qualifiedName];
-  if (event[0] == 'I') { stats.initCount++; stats.isEverUsed = true; }
-  else if (event[0] == 'D') { stats.deinitCount++; stats.isEverUsed = true; }
+  if (event[0] == 'I') { stats.initCount++; }
+  else if (event[0] == 'D') { stats.deinitCount++; }
 }
 
 static void writeClassLifecycleStatisticsNow() {
@@ -88,55 +88,52 @@ static void writeClassLifecycleStatisticsNow() {
       return;
     }
 
-    const char *envPath = getenv("SWIFT_CLASS_STATS_OUTPUT");
-    std::string outputPath = envPath && strlen(envPath) > 0 ? std::string(envPath) : "swift_class_lifecycle_stats.csv";
-    std::ofstream outFile(outputPath);
-
-    if (!outFile.is_open()) {
-      return;
+    // Use SIMULATOR_SHARED_RESOURCES_DIRECTORY or default path
+    std::string outputPath;
+    const char *simulatorSharedDir = getenv("SIMULATOR_SHARED_RESOURCES_DIRECTORY");
+    
+    if (simulatorSharedDir && strlen(simulatorSharedDir) > 0) {
+      outputPath = std::string(simulatorSharedDir) + "/swift_class_lifecycle_stats.json";
+      fprintf(stderr, "[YSWIFT] Using simulator shared resources directory: %s\n", outputPath.c_str());
+    } else {
+      outputPath = "swift_class_lifecycle_stats.json";
+      fprintf(stderr, "[YSWIFT] Using default output path: %s\n", outputPath.c_str());
     }
 
-    std::string csvContent;
-    csvContent.reserve(classStatsMap->size() * 150);
-    csvContent += "ClassName,InitCount,DeinitCount,IsUsed,HasLeak,LeakCount,Status\n";
+    @autoreleasepool {
+      NSMutableDictionary *jsonDict = [[NSMutableDictionary alloc] init];
 
-    for (const auto &entry : *classStatsMap) {
-      const std::string &className = entry.first;
-      const ClassLifecycleStats &stats = entry.second;
+      for (const auto &entry : *classStatsMap) {
+        const std::string &className = entry.first;
+        const ClassLifecycleStats &stats = entry.second;
 
-      csvContent += "\"";
-      csvContent += className;
-      csvContent += "\",";
-      csvContent += std::to_string(stats.initCount);
-      csvContent += ",";
-      csvContent += std::to_string(stats.deinitCount);
-      csvContent += ",";
-      csvContent += (stats.isEverUsed ? "TRUE" : "FALSE");
-      csvContent += ",";
+        NSDictionary *classData = @{
+          @"init": @(stats.initCount),
+          @"deinit": @(stats.deinitCount)
+        };
 
-      bool hasLeak = (stats.initCount != stats.deinitCount) && stats.isEverUsed;
-      long leakCount = hasLeak ? (static_cast<long>(stats.initCount) -
-                                  static_cast<long>(stats.deinitCount))
-                               : 0;
-
-      csvContent += (hasLeak ? "TRUE" : "FALSE");
-      csvContent += ",";
-      csvContent += std::to_string(leakCount);
-      csvContent += ",";
-
-      if (!stats.isEverUsed) {
-        csvContent += "UNUSED";
-      } else if (hasLeak) {
-        csvContent += "LEAK";
-      } else {
-        csvContent += "OK";
+        NSString *classNameStr = [NSString stringWithUTF8String:className.c_str()];
+        [jsonDict setObject:classData forKey:classNameStr];
       }
 
-      csvContent += "\n";
-    }
+      NSError *error = nil;
+      NSData *jsonData = [NSJSONSerialization dataWithJSONObject:jsonDict
+                                                         options:NSJSONWritingPrettyPrinted
+                                                           error:&error];
 
-    outFile << csvContent;
-    outFile.close();
+      if (jsonData && !error) {
+        NSString *outputPathStr = [NSString stringWithUTF8String:outputPath.c_str()];
+        BOOL success = [jsonData writeToFile:outputPathStr atomically:YES];
+        if (!success) {
+          fprintf(stderr, "[YSWIFT] Failed to write JSON file: %s\n", outputPath.c_str());
+          return;
+        }
+      } else {
+        fprintf(stderr, "[YSWIFT] JSON serialization error: %s\n", 
+                error ? [[error localizedDescription] UTF8String] : "Unknown error");
+        return;
+      }
+    }
     fprintf(stderr,
             "[YSWIFT] *** CLASS LIFECYCLE STATISTICS WRITTEN TO: %s ***\n",
             outputPath.c_str());
@@ -186,9 +183,81 @@ static void enumerateAllClassesInTarget() {
   discoveredClasses->reserve(discoveredClassesSet.size());
   
   for (const auto &className : discoveredClassesSet) {
-    (*classStatsMap)[className].isDiscovered = true;
     discoveredClasses->insert(className);
   }
 
   fprintf(stderr, "[YSWIFT] Found %zu app classes\n", discoveredClasses->size());
+  
+  // Read previous class count and add current count from JSON
+  // Use SIMULATOR_SHARED_RESOURCES_DIRECTORY or default path
+  std::string filePath;
+  const char *simulatorSharedDir = getenv("SIMULATOR_SHARED_RESOURCES_DIRECTORY");
+  
+  if (simulatorSharedDir && strlen(simulatorSharedDir) > 0) {
+    filePath = std::string(simulatorSharedDir) + "/swift_class_lifecycle_stats.json";
+  } else {
+    filePath = "swift_class_lifecycle_stats.json";
+  }
+  
+  if (!filePath.empty()) {
+    size_t previousDiscoveredCount = 0;
+    std::unordered_map<std::string, ClassLifecycleStats> existingStats;
+    
+    // Read existing JSON file using NSJSONSerialization
+    @autoreleasepool {
+      NSString *filePathStr = [NSString stringWithUTF8String:filePath.c_str()];
+      NSData *jsonData = [NSData dataWithContentsOfFile:filePathStr];
+      
+      if (jsonData) {
+        NSError *error = nil;
+        NSDictionary *jsonDict = [NSJSONSerialization JSONObjectWithData:jsonData
+                                                                 options:0
+                                                                   error:&error];
+        
+        if (jsonDict && !error && [jsonDict isKindOfClass:[NSDictionary class]]) {
+          for (NSString *className in jsonDict) {
+            NSDictionary *classData = jsonDict[className];
+            if ([classData isKindOfClass:[NSDictionary class]]) {
+              ClassLifecycleStats stats;
+              
+              NSNumber *initCount = classData[@"init"];
+              NSNumber *deinitCount = classData[@"deinit"];
+              
+              if (initCount && [initCount isKindOfClass:[NSNumber class]]) {
+                stats.initCount = [initCount unsignedLongValue];
+              }
+              
+              if (deinitCount && [deinitCount isKindOfClass:[NSNumber class]]) {
+                stats.deinitCount = [deinitCount unsignedLongValue];
+              }
+              
+              std::string classNameStr = [className UTF8String];
+              existingStats[classNameStr] = stats;
+              previousDiscoveredCount++;
+            }
+          }
+          fprintf(stderr, "[YSWIFT] Previous discovered classes from JSON: %zu\n", previousDiscoveredCount);
+        } else {
+          fprintf(stderr, "[YSWIFT] JSON parsing error: %s\n", 
+                  error ? [[error localizedDescription] UTF8String] : "Invalid JSON format");
+        }
+      } else {
+        fprintf(stderr, "[YSWIFT] No previous JSON file found, starting fresh\n");
+      }
+    }
+    
+    // Merge existing stats with discovered classes
+    {
+      std::lock_guard<std::mutex> lock(*classStatsMapMutex);
+      for (const auto &entry : existingStats) {
+        (*classStatsMap)[entry.first] = entry.second;
+      }
+    }
+    
+    size_t totalDiscoveredCount = previousDiscoveredCount + discoveredClasses->size();
+    fprintf(stderr, "[YSWIFT] Total discovered classes: %zu (previous: %zu + current session: %zu) - File: %s\n", 
+            totalDiscoveredCount, previousDiscoveredCount, discoveredClasses->size(), filePath.c_str());
+  } else {
+    fprintf(stderr, "[YSWIFT] No output path available\n");
+  }
 }
