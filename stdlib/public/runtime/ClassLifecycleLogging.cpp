@@ -16,16 +16,16 @@ static void writeClassLifecycleStatisticsNow();
 static void ensureTrackingInitialized();
 
 // Helper functions for CSV handling
-static const std::string& getStatsPath() {
-  static std::string cachedPath;
+static const char* getStatsPath() {
+  static char cachedPath[512] = {0};
   static bool initialized = false;
   
   if (!initialized) {
     const char *dir = getenv("SIMULATOR_SHARED_RESOURCES_DIRECTORY");
     if (dir && strlen(dir) > 0) {
-      cachedPath = std::string(dir) + "/swift_class_lifecycle_stats.csv";
+      snprintf(cachedPath, sizeof(cachedPath), "%s/swift_class_lifecycle_stats.csv", dir);
     } else {
-      cachedPath = "swift_class_lifecycle_stats.csv";
+      snprintf(cachedPath, sizeof(cachedPath), "swift_class_lifecycle_stats.csv");
     }
     initialized = true;
   }
@@ -150,13 +150,13 @@ static void writeClassLifecycleStatisticsNow() {
   }
 
   // Write to file outside of mutex lock
-  const std::string& path = getStatsPath();
+  const char* path = getStatsPath();
   std::ofstream file(path);
   if (file.is_open()) {
     writeCSVToFile(file, statsCopy);
-    fprintf(stderr, "[YSWIFT] Stats written to: %s (%zu classes)\n", path.c_str(), statsCopy.size());
+    fprintf(stderr, "[YSWIFT] Stats written to: %s (%zu classes)\n", path, statsCopy.size());
   } else {
-    fprintf(stderr, "[YSWIFT] Failed to write: %s\n", path.c_str());
+    fprintf(stderr, "[YSWIFT] Failed to write: %s\n", path);
   }
 }
 
