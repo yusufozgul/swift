@@ -45,12 +45,22 @@ static bool parseCSVStats(const std::string& filePath, std::unordered_map<std::s
     size_t comma2 = line.find(',', comma1 + 1);
     if (comma1 == std::string::npos || comma2 == std::string::npos) continue;
     
-    try {
-      stats[line.substr(0, comma1)] = {
-        std::stoul(line.substr(comma1 + 1, comma2 - comma1 - 1)),
-        std::stoul(line.substr(comma2 + 1))
-      };
-    } catch (...) {}
+    // Parse numbers manually without exceptions
+    std::string className = line.substr(0, comma1);
+    std::string initStr = line.substr(comma1 + 1, comma2 - comma1 - 1);
+    std::string deinitStr = line.substr(comma2 + 1);
+    
+    char* endPtr = nullptr;
+    unsigned long initCount = std::strtoul(initStr.c_str(), &endPtr, 10);
+    if (endPtr == initStr.c_str()) continue; // Parse error
+    
+    unsigned long deinitCount = std::strtoul(deinitStr.c_str(), &endPtr, 10);
+    if (endPtr == deinitStr.c_str()) continue; // Parse error
+    
+    ClassLifecycleStats stat;
+    stat.initCount = initCount;
+    stat.deinitCount = deinitCount;
+    stats[className] = stat;
   }
   return true;
 }
