@@ -7,9 +7,7 @@
 #include <fstream>
 #include <mutex>
 #include <objc/runtime.h>
-#include <sstream>
 #include <unordered_map>
-#include <unordered_set>
 
 using namespace swift;
 
@@ -18,19 +16,28 @@ static void writeClassLifecycleStatisticsNow();
 static void ensureTrackingInitialized();
 
 // Helper functions for CSV handling
-static std::string getStatsPath() {
-  const char *dir = getenv("SIMULATOR_SHARED_RESOURCES_DIRECTORY");
-  return dir && strlen(dir) > 0 ? std::string(dir) + "/swift_class_lifecycle_stats.csv" 
-                                : "swift_class_lifecycle_stats.csv";
+static const std::string& getStatsPath() {
+  static std::string cachedPath;
+  static bool initialized = false;
+  
+  if (!initialized) {
+    const char *dir = getenv("SIMULATOR_SHARED_RESOURCES_DIRECTORY");
+    if (dir && strlen(dir) > 0) {
+      cachedPath = std::string(dir) + "/swift_class_lifecycle_stats.csv";
+    } else {
+      cachedPath = "swift_class_lifecycle_stats.csv";
+    }
+    initialized = true;
+  }
+  
+  return cachedPath;
 }
 
-static std::string toCSV(const std::unordered_map<std::string, ClassLifecycleStats>& statsMap) {
-  std::ostringstream csv;
-  csv << "ClassName,InitCount,DeinitCount\n";
+static void writeCSVToFile(std::ofstream& file, const std::unordered_map<std::string, ClassLifecycleStats>& statsMap) {
+  file << "ClassName,InitCount,DeinitCount\n";
   for (const auto& entry : statsMap) {
-    csv << entry.first << "," << entry.second.initCount << "," << entry.second.deinitCount << "\n";
+    file << entry.first << ',' << entry.second.initCount << ',' << entry.second.deinitCount << '\n';
   }
-  return csv.str();
 }
 
 static bool parseCSVStats(const std::string& filePath, std::unordered_map<std::string, ClassLifecycleStats>& stats) {
@@ -45,29 +52,27 @@ static bool parseCSVStats(const std::string& filePath, std::unordered_map<std::s
     size_t comma2 = line.find(',', comma1 + 1);
     if (comma1 == std::string::npos || comma2 == std::string::npos) continue;
     
-    // Parse numbers manually without exceptions
-    std::string className = line.substr(0, comma1);
-    std::string initStr = line.substr(comma1 + 1, comma2 - comma1 - 1);
-    std::string deinitStr = line.substr(comma2 + 1);
-    
+    // Parse numbers directly without creating substrings
     char* endPtr = nullptr;
-    unsigned long initCount = std::strtoul(initStr.c_str(), &endPtr, 10);
-    if (endPtr == initStr.c_str()) continue; // Parse error
+    const char* lineData = line.c_str();
     
-    unsigned long deinitCount = std::strtoul(deinitStr.c_str(), &endPtr, 10);
-    if (endPtr == deinitStr.c_str()) continue; // Parse error
+    unsigned long initCount = std::strtoul(lineData + comma1 + 1, &endPtr, 10);
+    if (endPtr == lineData + comma1 + 1) continue; // Parse error
     
+    unsigned long deinitCount = std::strtoul(lineData + comma2 + 1, &endPtr, 10);
+    if (endPtr == lineData + comma2 + 1) continue; // Parse error
+    
+    // Only create string for the class name
     ClassLifecycleStats stat;
     stat.initCount = initCount;
     stat.deinitCount = deinitCount;
-    stats[className] = stat;
+    stats[line.substr(0, comma1)] = stat;
   }
   return true;
 }
 
 namespace {
 std::unordered_map<std::string, ClassLifecycleStats> *classStatsMap = nullptr;
-std::unordered_set<std::string> *discoveredClasses = nullptr;
 std::mutex *classStatsMapMutex = nullptr;
 std::atomic<bool> trackingInitialized{false};
 } // namespace
@@ -76,7 +81,6 @@ static void initializeTracking() {
   fprintf(stderr, "[YSWIFT] Initializing tracking on first use\n");
   
   classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
-  discoveredClasses = new std::unordered_set<std::string>();
   classStatsMapMutex = new std::mutex();
 
   fprintf(stderr, "[YSWIFT] Enumerating all classes in iOS Simulator target...\n");
@@ -94,28 +98,31 @@ static void initializeTracking() {
 }
 
 void swift::logClassLifecycle(const HeapMetadata *metadata, const char *event) {
-  ensureTrackingInitialized();
+  // Fast path: check initialization without function call overhead
+  if (!trackingInitialized.load(std::memory_order_acquire)) {
+    ensureTrackingInitialized();
+  }
   
   if (metadata->getKind() != MetadataKind::Class) return;
   
   // Get the qualified (full module) name from metadata
   std::string qualifiedName = nameForMetadata(metadata, true);
-  if (qualifiedName.empty() || !discoveredClasses) return;
+  if (qualifiedName.empty() || !classStatsMap) return;
 
   {
     std::lock_guard<std::mutex> lock(*classStatsMapMutex);
     
     // Early exit if class not tracked
-    if (discoveredClasses->find(qualifiedName) == discoveredClasses->end()) {
+    auto it = classStatsMap->find(qualifiedName);
+    if (it == classStatsMap->end()) {
       return;
     }
 
-    // Update stats
-    auto &stats = (*classStatsMap)[qualifiedName];
+    // Update stats - branchless increment where possible
     if (event[0] == 'I') { 
-      stats.initCount++; 
+      it->second.initCount++; 
     } else if (event[0] == 'D') { 
-      stats.deinitCount++; 
+      it->second.deinitCount++; 
     }
   }
 }
@@ -135,14 +142,19 @@ static void writeClassLifecycleStatisticsNow() {
   if (!trackingInitialized.load()) return;
   if (!classStatsMap || !classStatsMapMutex) return;
 
-  std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-  if (classStatsMap->empty()) return;
+  // Copy data under lock, write to file without lock
+  std::unordered_map<std::string, ClassLifecycleStats> statsCopy;
+  {
+    std::lock_guard<std::mutex> lock(*classStatsMapMutex);
+    statsCopy = *classStatsMap;
+  }
 
-  std::string path = getStatsPath();
+  // Write to file outside of mutex lock
+  const std::string& path = getStatsPath();
   std::ofstream file(path);
   if (file.is_open()) {
-    file << toCSV(*classStatsMap);
-    fprintf(stderr, "[YSWIFT] Stats written to: %s\n", path.c_str());
+    writeCSVToFile(file, statsCopy);
+    fprintf(stderr, "[YSWIFT] Stats written to: %s (%zu classes)\n", path.c_str(), statsCopy.size());
   } else {
     fprintf(stderr, "[YSWIFT] Failed to write: %s\n", path.c_str());
   }
@@ -152,9 +164,17 @@ static bool isAppClass(Class cls) {
   if (!cls) return false;
   const char *imageName = class_getImageName(cls);
   if (!imageName) return false;
+  
+  // Cache the app name and pattern
   static const char *appName = getenv("SWIFT_APP_NAME");
-  char pattern[256];
-  snprintf(pattern, sizeof(pattern), "%s.app/", appName);
+  static char pattern[256];
+  static bool patternInitialized = false;
+  
+  if (!patternInitialized) {
+    snprintf(pattern, sizeof(pattern), "%s.app/", appName);
+    patternInitialized = true;
+  }
+  
   return strstr(imageName, pattern) && !strstr(imageName, "/Frameworks/");
 }
 
@@ -162,34 +182,35 @@ static void enumerateAllClassesInTarget() {
   if (!classStatsMap || !classStatsMapMutex)
     return;
 
-  std::unordered_set<std::string> discoveredClassesSet;
-  discoveredClassesSet.reserve(1024);
+  // Load existing stats first
+  std::unordered_map<std::string, ClassLifecycleStats> existingStats;
+  existingStats.reserve(1024); // Pre-allocate for better performance
+  parseCSVStats(getStatsPath(), existingStats);
 
+  // Enumerate all app classes
   unsigned int numClasses = 0;
   Class *classes = objc_copyClassList(&numClasses);
+  
+  std::lock_guard<std::mutex> lock(*classStatsMapMutex);
+  
   if (classes) {
     for (unsigned int i = 0; i < numClasses; i++) {
       const char *className = class_getName(classes[i]);
       if (className && isAppClass(classes[i])) {
-        discoveredClassesSet.emplace(className);
+        std::string classNameStr(className);
+        
+        // Check if we have existing stats for this class
+        auto existingIt = existingStats.find(classNameStr);
+        if (existingIt != existingStats.end()) {
+          (*classStatsMap)[classNameStr] = existingIt->second;
+        } else {
+          // New class, initialize with 0,0
+          (*classStatsMap)[classNameStr] = ClassLifecycleStats();
+        }
       }
     }
     free(classes);
   }
-
-  {
-    std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-    *discoveredClasses = discoveredClassesSet;
-    fprintf(stderr, "[YSWIFT] Found %zu app classes\n", discoveredClasses->size());
-  }
   
-  // Load existing stats
-  std::unordered_map<std::string, ClassLifecycleStats> existingStats;
-  std::string filePath = getStatsPath();
-  
-  if (parseCSVStats(filePath, existingStats)) {
-    std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-    *classStatsMap = existingStats;
-    fprintf(stderr, "[YSWIFT] Loaded %zu previous stats\n", existingStats.size());
-  }
+  fprintf(stderr, "[YSWIFT] Found %zu app classes\n", classStatsMap->size());
 }
