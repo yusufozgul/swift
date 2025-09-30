@@ -125,9 +125,7 @@ void swift::logClassLifecycle(const HeapObject *object, const char *event) {
   if (qualifiedName.empty() || !classStatsMap) return;
   
   // Check if object is immortal
-  auto heapObj = const_cast<HeapObject *>(object);
-  auto bits = heapObj->refCounts.refCounts.load(SWIFT_MEMORY_ORDER_CONSUME);
-  bool isImmortal = bits.isImmortal(true);
+  bool isImmortal = object->refCounts.isImmortal();
 
   {
     std::lock_guard<std::mutex> lock(*classStatsMapMutex);
