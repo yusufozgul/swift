@@ -10,9 +10,8 @@ namespace swift {
 struct ClassLifecycleStats {
   unsigned long initCount;
   unsigned long deinitCount;
-  bool isImmortal;
   
-  ClassLifecycleStats() : initCount(0), deinitCount(0), isImmortal(false) {}
+  ClassLifecycleStats() : initCount(0), deinitCount(0) {}
 };
 
 /// Log class lifecycle events (initialization and deinitialization)

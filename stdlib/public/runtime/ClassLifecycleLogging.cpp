@@ -35,10 +35,9 @@ static const char* getStatsPath() {
 }
 
 static void writeCSVToFile(std::ofstream& file, const std::unordered_map<std::string, ClassLifecycleStats>& statsMap) {
-  file << "ClassName,InitCount,DeinitCount,IsImmortal\n";
+  file << "ClassName,InitCount,DeinitCount\n";
   for (const auto& entry : statsMap) {
-    file << entry.first << ',' << entry.second.initCount << ',' << entry.second.deinitCount << ',' 
-         << (entry.second.isImmortal ? "true" : "false") << '\n';
+    file << entry.first << ',' << entry.second.initCount << ',' << entry.second.deinitCount << '\n';
   }
 }
 
@@ -52,7 +51,6 @@ static bool parseCSVStats(const std::string& filePath, std::unordered_map<std::s
   while (std::getline(file, line)) {
     size_t comma1 = line.find(',');
     size_t comma2 = line.find(',', comma1 + 1);
-    size_t comma3 = line.find(',', comma2 + 1);
     if (comma1 == std::string::npos || comma2 == std::string::npos) continue;
     
     // Parse numbers directly without creating substrings
@@ -65,18 +63,10 @@ static bool parseCSVStats(const std::string& filePath, std::unordered_map<std::s
     unsigned long deinitCount = std::strtoul(lineData + comma2 + 1, &endPtr, 10);
     if (endPtr == lineData + comma2 + 1) continue; // Parse error
     
-    // Parse isImmortal (if exists, otherwise default to false)
-    bool isImmortal = false;
-    if (comma3 != std::string::npos) {
-      const char* immortalStr = lineData + comma3 + 1;
-      isImmortal = (strncmp(immortalStr, "true", 4) == 0);
-    }
-    
     // Only create string for the class name
     ClassLifecycleStats stat;
     stat.initCount = initCount;
     stat.deinitCount = deinitCount;
-    stat.isImmortal = isImmortal;
     stats[line.substr(0, comma1)] = stat;
   }
   return true;
@@ -123,9 +113,6 @@ void swift::logClassLifecycle(const HeapObject *object, const char *event) {
   // Get the qualified (full module) name from metadata
   std::string qualifiedName = nameForMetadata(metadata, true);
   if (qualifiedName.empty() || !classStatsMap) return;
-  
-  // Check if object is immortal
-  bool isImmortal = object->refCounts.isImmortal();
 
   {
     std::lock_guard<std::mutex> lock(*classStatsMapMutex);
@@ -134,11 +121,6 @@ void swift::logClassLifecycle(const HeapObject *object, const char *event) {
     auto it = classStatsMap->find(qualifiedName);
     if (it == classStatsMap->end()) {
       return;
-    }
-    
-    // Mark as immortal if detected
-    if (isImmortal) {
-      it->second.isImmortal = true;
     }
 
     // Update stats - branchless increment where possible

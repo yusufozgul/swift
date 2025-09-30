@@ -968,12 +968,6 @@ class RefCounts {
       return bits.getIsDeiniting();
   }
 
-  // Return true if the object is immortal.
-  bool isImmortal() const {
-    auto bits = refCounts.load(SWIFT_MEMORY_ORDER_CONSUME);
-    return bits.isImmortal(true);
-  }
-
   bool hasSideTable() const {
     auto bits = refCounts.load(SWIFT_MEMORY_ORDER_CONSUME);
     return bits.hasSideTable();
