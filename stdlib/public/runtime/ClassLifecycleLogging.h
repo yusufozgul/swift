@@ -2,6 +2,7 @@
 #define SWIFT_RUNTIME_CLASSLIFECYCLELOGGING_H
 
 #include "swift/Runtime/Metadata.h"
+#include "swift/Runtime/HeapObject.h"
 
 namespace swift {
 
@@ -9,16 +10,17 @@ namespace swift {
 struct ClassLifecycleStats {
   unsigned long initCount;
   unsigned long deinitCount;
+  bool isImmortal;
   
-  ClassLifecycleStats() : initCount(0), deinitCount(0) {}
+  ClassLifecycleStats() : initCount(0), deinitCount(0), isImmortal(false) {}
 };
 
 /// Log class lifecycle events (initialization and deinitialization)
 /// for debugging and monitoring purposes.
 ///
-/// \param metadata The metadata of the class being logged
+/// \param object The heap object being logged
 /// \param event The lifecycle event ("INIT" or "DEINIT")
-void logClassLifecycle(const HeapMetadata *metadata, const char* event);
+void logClassLifecycle(const HeapObject *object, const char* event);
 
 } // namespace swift
 

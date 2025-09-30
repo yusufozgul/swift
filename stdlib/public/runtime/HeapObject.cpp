@@ -290,7 +290,7 @@ static HeapObject *_swift_allocObject_(HeapMetadata const *metadata,
 
   SWIFT_RT_TRACK_INVOCATION(object, swift_allocObject);
 
-  logClassLifecycle(metadata, "INIT");
+  logClassLifecycle(object, "INIT");
 
   return object;
 }
@@ -828,7 +828,7 @@ void swift::swift_unownedCheck(HeapObject *object) {
 }
 
 void _swift_release_dealloc(HeapObject *object) {
-  logClassLifecycle(object->metadata, "DEINIT");
+  logClassLifecycle(object, "DEINIT");
   asFullMetadata(object->metadata)->destroy(object);
 }
 
