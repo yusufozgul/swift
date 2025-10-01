@@ -8,11 +8,9 @@
 #include <fstream>
 #include <mutex>
 #include <objc/runtime.h>
-#include <signal.h>
-#include <unistd.h>
 #include <unordered_map>
 
-#ifdef __OBJC__
+#if TARGET_OS_SIMULATOR && defined(__OBJC__)
   #import <Foundation/Foundation.h>
   #import <UIKit/UIKit.h>
 #endif
@@ -88,24 +86,9 @@ std::mutex *classStatsMapMutex = nullptr;
 std::atomic<bool> trackingInitialized{false};
 } // namespace
 
-// Signal handler for graceful shutdown
-// Note: writeClassLifecycleStatisticsNow uses mutex which is NOT async-signal-safe,
-// but in practice this works for termination signals where we're exiting anyway
-static void signalHandler(int signum) {
-  // Minimal signal-safe logging
-  const char msg[] = "[YSWIFT] *** Signal received, writing stats ***\n";
-  write(STDERR_FILENO, msg, sizeof(msg) - 1);
-  
-  writeClassLifecycleStatisticsNow();
-  
-  // Re-raise signal to continue default handling
-  signal(signum, SIG_DFL);
-  raise(signum);
-}
-
-// iOS UIApplication termination handler
-static void setupiOSTerminationHandler() {
-#if TARGET_OS_IPHONE && defined(__OBJC__)
+// iOS Simulator termination handler (UITest scenarios)
+static void setupAppTerminationHandler() {
+#if TARGET_OS_SIMULATOR && defined(__OBJC__)
   // Schedule on main queue to ensure UIApplication is available
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
@@ -129,34 +112,36 @@ static void setupiOSTerminationHandler() {
           writeClassLifecycleStatisticsNow();
         }];
       
-      fprintf(stderr, "[YSWIFT] iOS lifecycle handlers registered (terminate + background)\n");
+      fprintf(stderr, "[YSWIFT] iOS Simulator lifecycle handlers registered (terminate + background)\n");
     }
   });
 #else
-  // Fallback: rely on signal handlers only
-  fprintf(stderr, "[YSWIFT] iOS termination handler not available (compile as .mm for UIApplication support)\n");
+  // Not running on simulator - no handlers registered
+  fprintf(stderr, "[YSWIFT] Not on iOS Simulator - no termination handlers registered\n");
 #endif
 }
 
 static void initializeTracking() {
-  fprintf(stderr, "[YSWIFT] Initializing tracking on first use\n");
+#if TARGET_OS_SIMULATOR
+  fprintf(stderr, "[YSWIFT] Initializing tracking on iOS Simulator\n");
   
   classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
   classStatsMapMutex = new std::mutex();
 
-  fprintf(stderr, "[YSWIFT] Enumerating all classes in iOS Simulator target...\n");
+  fprintf(stderr, "[YSWIFT] Enumerating all classes in target...\n");
   enumerateAllClassesInTarget();
 
-  // Register signal handlers for graceful shutdown (Unix signals)
-  signal(SIGTERM, signalHandler);
-  signal(SIGINT, signalHandler);
-  signal(SIGQUIT, signalHandler);
-  fprintf(stderr, "[YSWIFT] Signal handlers registered\n");
+  // Register iOS Simulator termination handler (UITest scenarios)
+  setupAppTerminationHandler();
   
-  // Register iOS-specific termination handler (for UITest scenarios)
-  setupiOSTerminationHandler();
+  fprintf(stderr, "[YSWIFT] iOS Simulator: UIApplication notification handlers active\n");
+#else
+  // Not on simulator - initialize but no handlers
+  fprintf(stderr, "[YSWIFT] Not on iOS Simulator - tracking disabled\n");
   
-  fprintf(stderr, "[YSWIFT] Termination handlers registered. Stats will be written on program termination.\n");
+  classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
+  classStatsMapMutex = new std::mutex();
+#endif
 }
 
 void swift::logClassLifecycle(const HeapObject *object, const char *event) {
