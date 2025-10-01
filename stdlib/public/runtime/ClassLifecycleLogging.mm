@@ -10,7 +10,7 @@
 #include <objc/runtime.h>
 #include <unordered_map>
 
-#if TARGET_OS_SIMULATOR && defined(__OBJC__)
+#if TARGET_OS_IOS && TARGET_OS_SIMULATOR && defined(__OBJC__)
   #import <Foundation/Foundation.h>
   #import <UIKit/UIKit.h>
 #endif
@@ -88,7 +88,7 @@ std::atomic<bool> trackingInitialized{false};
 
 // iOS Simulator termination handler (UITest scenarios)
 static void setupAppTerminationHandler() {
-#if TARGET_OS_SIMULATOR && defined(__OBJC__)
+#if TARGET_OS_IOS && TARGET_OS_SIMULATOR && defined(__OBJC__)
   // Schedule on main queue to ensure UIApplication is available
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
@@ -116,13 +116,13 @@ static void setupAppTerminationHandler() {
     }
   });
 #else
-  // Not running on simulator - no handlers registered
+  // Not running on iOS Simulator - no handlers registered
   fprintf(stderr, "[YSWIFT] Not on iOS Simulator - no termination handlers registered\n");
 #endif
 }
 
 static void initializeTracking() {
-#if TARGET_OS_SIMULATOR
+#if TARGET_OS_IOS && TARGET_OS_SIMULATOR
   fprintf(stderr, "[YSWIFT] Initializing tracking on iOS Simulator\n");
   
   classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
@@ -136,7 +136,7 @@ static void initializeTracking() {
   
   fprintf(stderr, "[YSWIFT] iOS Simulator: UIApplication notification handlers active\n");
 #else
-  // Not on simulator - initialize but no handlers
+  // Not on iOS Simulator - initialize but no handlers
   fprintf(stderr, "[YSWIFT] Not on iOS Simulator - tracking disabled\n");
   
   classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
