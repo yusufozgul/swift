@@ -10,7 +10,6 @@
 #include <objc/runtime.h>
 #include <objc/message.h>
 #include <unordered_map>
-#include <CoreFoundation/CoreFoundation.h>
 
 using namespace swift;
 
@@ -88,7 +87,6 @@ static void setupAppTerminationHandler() {
 #if TARGET_OS_IOS && TARGET_OS_SIMULATOR
   // Schedule on main queue to ensure UIApplication is available
   dispatch_async(dispatch_get_main_queue(), ^{
-    // Use pure C/Objective-C runtime APIs to avoid Foundation framework dependency
     Class NSNotificationCenterClass = objc_getClass("NSNotificationCenter");
     if (!NSNotificationCenterClass) {
       fprintf(stderr, "[YSWIFT] NSNotificationCenter not available\n");
@@ -104,9 +102,13 @@ static void setupAppTerminationHandler() {
       return;
     }
     
-    // Create notification names using CFString
-    id terminateNotificationName = (id)CFStringCreateWithCString(NULL, "UIApplicationWillTerminateNotification", kCFStringEncodingUTF8);
-    id backgroundNotificationName = (id)CFStringCreateWithCString(NULL, "UIApplicationDidEnterBackgroundNotification", kCFStringEncodingUTF8);
+    // Create NSString notification names using runtime APIs
+    Class NSStringClass = objc_getClass("NSString");
+    SEL stringWithUTF8Sel = sel_registerName("stringWithUTF8String:");
+    id (*stringWithUTF8Imp)(Class, SEL, const char*) = (id (*)(Class, SEL, const char*))objc_msgSend;
+    
+    id terminateNotificationName = stringWithUTF8Imp(NSStringClass, stringWithUTF8Sel, "UIApplicationWillTerminateNotification");
+    id backgroundNotificationName = stringWithUTF8Imp(NSStringClass, stringWithUTF8Sel, "UIApplicationDidEnterBackgroundNotification");
     
     // Register observers using blocks
     typedef void (^NotificationBlock)(id notification);
@@ -129,10 +131,6 @@ static void setupAppTerminationHandler() {
     
     // Register for background notification  
     addObserverImp(center, addObserverSel, backgroundNotificationName, nil, nil, backgroundBlock);
-    
-    // Release CFStrings
-    if (terminateNotificationName) CFRelease(terminateNotificationName);
-    if (backgroundNotificationName) CFRelease(backgroundNotificationName);
     
     fprintf(stderr, "[YSWIFT] iOS Simulator lifecycle handlers registered (terminate + background)\n");
   });
