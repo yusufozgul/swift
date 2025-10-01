@@ -1,9 +1,10 @@
 set(swift_runtime_compile_flags ${SWIFT_RUNTIME_CORE_CXX_FLAGS})
 set(swift_runtime_linker_flags ${SWIFT_RUNTIME_CORE_LINK_FLAGS})
 
-# Add Foundation framework for iOS/macOS (needed for ClassLifecycleLogging.mm NSNotificationCenter)
-# Using weak linking so it doesn't fail on platforms without it
-list(APPEND swift_runtime_linker_flags "-weak_framework" "Foundation")
+# Add Foundation framework for Apple platforms (needed for ClassLifecycleLogging.mm NSNotificationCenter)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  list(APPEND swift_runtime_linker_flags "-framework" "Foundation")
+endif()
 
 if(SWIFT_RUNTIME_CLOBBER_FREED_OBJECTS)
   list(APPEND swift_runtime_compile_flags
