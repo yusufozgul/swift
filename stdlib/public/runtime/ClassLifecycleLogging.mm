@@ -10,6 +10,9 @@
 #include <objc/runtime.h>
 #include <objc/message.h>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
+#include <dlfcn.h>
 
 using namespace swift;
 
@@ -233,22 +236,47 @@ static void writeClassLifecycleStatisticsNow() {
   }
 }
 
-static bool isAppClass(Class cls) {
-  if (!cls) return false;
-  const char *imageName = class_getImageName(cls);
+static bool isAppImageName(const char* imageName) {
   if (!imageName) return false;
   
   // Cache the app name and pattern
   static const char *appName = getenv("SWIFT_APP_NAME");
   static char pattern[256];
+  static size_t patternLen = 0;
   static bool patternInitialized = false;
+  static bool hasAppName = false;
   
   if (!patternInitialized) {
-    snprintf(pattern, sizeof(pattern), "%s.app/", appName);
+    hasAppName = (appName != nullptr && appName[0] != '\0');
+    if (hasAppName) {
+      patternLen = snprintf(pattern, sizeof(pattern), "%s.app/", appName);
+    }
     patternInitialized = true;
   }
   
-  return strstr(imageName, pattern) && !strstr(imageName, "/Frameworks/");
+  // Early exit if no app name configured
+  if (!hasAppName) return false;
+  
+  // Quick length check before strstr
+  size_t imageLen = strlen(imageName);
+  if (imageLen < patternLen) return false;
+  
+  // Use strstr once and cache result
+  const char *appLocation = strstr(imageName, pattern);
+  if (!appLocation) return false;
+  
+  // Check if it's not in Frameworks (strstr is expensive, do it only if needed)
+  return !strstr(imageName, "/Frameworks/");
+}
+
+static bool isAppClass(Class cls, const std::unordered_set<const char*>& appImages) {
+  if (!cls) return false;
+  
+  const char *imageName = class_getImageName(cls);
+  if (!imageName) return false;
+  
+  // Fast lookup in pre-filtered app images set
+  return appImages.find(imageName) != appImages.end();
 }
 
 // Only used on iOS Simulator
@@ -261,12 +289,7 @@ static void enumerateAllClassesInTarget() {
   if (!classStatsMap || !classStatsMapMutex)
     return;
 
-  // Load existing stats first (outside lock)
-  std::unordered_map<std::string, ClassLifecycleStats> existingStats;
-  existingStats.reserve(1024); // Pre-allocate for better performance
-  parseCSVStats(getStatsPath(), existingStats);
-
-  // Enumerate all app classes
+  // Step 1: Get all classes
   unsigned int numClasses = 0;
   Class *classes = objc_copyClassList(&numClasses);
   
@@ -275,15 +298,67 @@ static void enumerateAllClassesInTarget() {
     return;
   }
   
-  // Process classes under lock
+  fprintf(stderr, "[YSWIFT] Total classes to scan: %u\n", numClasses);
+  
+  // Step 2: Build a set of unique image names (much smaller than class count)
+  std::unordered_set<const char*> uniqueImages;
+  uniqueImages.reserve(256); // Most apps have < 100 images
+  
+  for (unsigned int i = 0; i < numClasses; i++) {
+    const char *imageName = class_getImageName(classes[i]);
+    if (imageName) {
+      uniqueImages.insert(imageName);
+    }
+  }
+  
+  fprintf(stderr, "[YSWIFT] Found %zu unique images\n", uniqueImages.size());
+  
+  // Step 3: Filter to app images only (this is where the expensive string operations happen)
+  std::unordered_set<const char*> appImages;
+  appImages.reserve(32); // App images are typically very few
+  
+  for (const char* imageName : uniqueImages) {
+    if (isAppImageName(imageName)) {
+      appImages.insert(imageName);
+    }
+  }
+  
+  fprintf(stderr, "[YSWIFT] Filtered to %zu app images\n", appImages.size());
+  
+  // If no app images found, bail early
+  if (appImages.empty()) {
+    free(classes);
+    fprintf(stderr, "[YSWIFT] No app images found, skipping class enumeration\n");
+    return;
+  }
+  
+  // Step 4: Filter classes by app images (fast pointer comparison)
+  std::vector<const char*> appClassNames;
+  appClassNames.reserve(numClasses / 10); // Better estimate for large apps
+  
+  for (unsigned int i = 0; i < numClasses; i++) {
+    if (!isAppClass(classes[i], appImages)) continue;
+    const char *className = class_getName(classes[i]);
+    if (className) {
+      appClassNames.push_back(className);
+    }
+  }
+  
+  free(classes); // Free early, we're done with the class list
+  
+  fprintf(stderr, "[YSWIFT] Filtered to %zu app classes\n", appClassNames.size());
+  
+  // Step 5: Load existing stats (outside lock)
+  std::unordered_map<std::string, ClassLifecycleStats> existingStats;
+  existingStats.reserve(appClassNames.size());
+  parseCSVStats(getStatsPath(), existingStats);
+  
+  // Step 6: Populate stats map under lock (minimize lock time)
   {
     std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-    classStatsMap->reserve(numClasses / 10); // Estimate ~10% are app classes
+    classStatsMap->reserve(appClassNames.size());
     
-    for (unsigned int i = 0; i < numClasses; i++) {
-      const char *className = class_getName(classes[i]);
-      if (!className || !isAppClass(classes[i])) continue;
-      
+    for (const char* className : appClassNames) {
       std::string classNameStr(className);
       
       // Check if we have existing stats for this class
@@ -296,8 +371,6 @@ static void enumerateAllClassesInTarget() {
       }
     }
     
-    fprintf(stderr, "[YSWIFT] Found %zu app classes\n", classStatsMap->size());
+    fprintf(stderr, "[YSWIFT] Loaded %zu app classes into tracking map\n", classStatsMap->size());
   }
-  
-  free(classes);
 }
