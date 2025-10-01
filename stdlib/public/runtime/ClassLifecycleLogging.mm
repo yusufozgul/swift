@@ -12,7 +12,6 @@
 
 #if TARGET_OS_IOS && TARGET_OS_SIMULATOR && defined(__OBJC__)
   #import <Foundation/Foundation.h>
-  #import <UIKit/UIKit.h>
 #endif
 
 using namespace swift;
@@ -95,7 +94,8 @@ static void setupAppTerminationHandler() {
       NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
       
       // Register for UIApplicationWillTerminateNotification (normal app termination)
-      [center addObserverForName:UIApplicationWillTerminateNotification
+      // Using string literal to avoid UIKit dependency
+      [center addObserverForName:@"UIApplicationWillTerminateNotification"
         object:nil
         queue:nil
         usingBlock:^(NSNotification *notification) {
@@ -104,7 +104,8 @@ static void setupAppTerminationHandler() {
         }];
       
       // Register for UIApplicationDidEnterBackgroundNotification (UITest often suspends)
-      [center addObserverForName:UIApplicationDidEnterBackgroundNotification
+      // Using string literal to avoid UIKit dependency
+      [center addObserverForName:@"UIApplicationDidEnterBackgroundNotification"
         object:nil
         queue:nil
         usingBlock:^(NSNotification *notification) {
