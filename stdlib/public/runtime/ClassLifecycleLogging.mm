@@ -8,7 +8,14 @@
 #include <fstream>
 #include <mutex>
 #include <objc/runtime.h>
+#include <signal.h>
+#include <unistd.h>
 #include <unordered_map>
+
+#ifdef __OBJC__
+  #import <Foundation/Foundation.h>
+  #import <UIKit/UIKit.h>
+#endif
 
 using namespace swift;
 
@@ -35,7 +42,10 @@ static const char* getStatsPath() {
 }
 
 static void writeCSVToFile(std::ofstream& file, const std::unordered_map<std::string, ClassLifecycleStats>& statsMap) {
+  // Write header
   file << "ClassName,InitCount,DeinitCount\n";
+  
+  // Write all tracked classes (even with 0,0 to preserve tracking state)
   for (const auto& entry : statsMap) {
     file << entry.first << ',' << entry.second.initCount << ',' << entry.second.deinitCount << '\n';
   }
@@ -78,6 +88,56 @@ std::mutex *classStatsMapMutex = nullptr;
 std::atomic<bool> trackingInitialized{false};
 } // namespace
 
+// Signal handler for graceful shutdown
+// Note: writeClassLifecycleStatisticsNow uses mutex which is NOT async-signal-safe,
+// but in practice this works for termination signals where we're exiting anyway
+static void signalHandler(int signum) {
+  // Minimal signal-safe logging
+  const char msg[] = "[YSWIFT] *** Signal received, writing stats ***\n";
+  write(STDERR_FILENO, msg, sizeof(msg) - 1);
+  
+  writeClassLifecycleStatisticsNow();
+  
+  // Re-raise signal to continue default handling
+  signal(signum, SIG_DFL);
+  raise(signum);
+}
+
+// iOS UIApplication termination handler
+static void setupiOSTerminationHandler() {
+#if TARGET_OS_IPHONE && defined(__OBJC__)
+  // Schedule on main queue to ensure UIApplication is available
+  dispatch_async(dispatch_get_main_queue(), ^{
+    @autoreleasepool {
+      NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+      
+      // Register for UIApplicationWillTerminateNotification (normal app termination)
+      [center addObserverForName:UIApplicationWillTerminateNotification
+        object:nil
+        queue:nil
+        usingBlock:^(NSNotification *notification) {
+          fprintf(stderr, "[YSWIFT] *** UIApplication will terminate, writing stats ***\n");
+          writeClassLifecycleStatisticsNow();
+        }];
+      
+      // Register for UIApplicationDidEnterBackgroundNotification (UITest often suspends)
+      [center addObserverForName:UIApplicationDidEnterBackgroundNotification
+        object:nil
+        queue:nil
+        usingBlock:^(NSNotification *notification) {
+          fprintf(stderr, "[YSWIFT] *** UIApplication entered background, writing stats ***\n");
+          writeClassLifecycleStatisticsNow();
+        }];
+      
+      fprintf(stderr, "[YSWIFT] iOS lifecycle handlers registered (terminate + background)\n");
+    }
+  });
+#else
+  // Fallback: rely on signal handlers only
+  fprintf(stderr, "[YSWIFT] iOS termination handler not available (compile as .mm for UIApplication support)\n");
+#endif
+}
+
 static void initializeTracking() {
   fprintf(stderr, "[YSWIFT] Initializing tracking on first use\n");
   
@@ -87,28 +147,29 @@ static void initializeTracking() {
   fprintf(stderr, "[YSWIFT] Enumerating all classes in iOS Simulator target...\n");
   enumerateAllClassesInTarget();
 
-  dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, 
-                                                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0));
-  dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), 
-                           30 * NSEC_PER_SEC, 5 * NSEC_PER_SEC);
-  dispatch_source_set_event_handler(timer, ^{
-    fprintf(stderr, "[YSWIFT] *** Timer fired, writing stats ***\n");
-    writeClassLifecycleStatisticsNow();
-  });
-  dispatch_resume(timer);
+  // Register signal handlers for graceful shutdown (Unix signals)
+  signal(SIGTERM, signalHandler);
+  signal(SIGINT, signalHandler);
+  signal(SIGQUIT, signalHandler);
+  fprintf(stderr, "[YSWIFT] Signal handlers registered\n");
+  
+  // Register iOS-specific termination handler (for UITest scenarios)
+  setupiOSTerminationHandler();
+  
+  fprintf(stderr, "[YSWIFT] Termination handlers registered. Stats will be written on program termination.\n");
 }
 
 void swift::logClassLifecycle(const HeapObject *object, const char *event) {
-  if (!object) return;
-  
-  const HeapMetadata *metadata = object->metadata;
+  // Fast path: early exits
+  if (!object || !event) return;
   
   // Fast path: check initialization without function call overhead
   if (!trackingInitialized.load(std::memory_order_acquire)) {
     ensureTrackingInitialized();
   }
   
-  if (metadata->getKind() != MetadataKind::Class) return;
+  const HeapMetadata *metadata = object->metadata;
+  if (!metadata || metadata->getKind() != MetadataKind::Class) return;
   
   // Get the qualified (full module) name from metadata
   std::string qualifiedName = nameForMetadata(metadata, true);
@@ -123,12 +184,9 @@ void swift::logClassLifecycle(const HeapObject *object, const char *event) {
       return;
     }
 
-    // Update stats - branchless increment where possible
-    if (event[0] == 'I') { 
-      it->second.initCount++; 
-    } else if (event[0] == 'D') { 
-      it->second.deinitCount++; 
-    }
+    // Update stats - branchless comparison
+    it->second.initCount += (event[0] == 'I');
+    it->second.deinitCount += (event[0] == 'D');
   }
 }
 
@@ -144,7 +202,7 @@ static void ensureTrackingInitialized() {
 }
 
 static void writeClassLifecycleStatisticsNow() {
-  if (!trackingInitialized.load()) return;
+  if (!trackingInitialized.load(std::memory_order_acquire)) return;
   if (!classStatsMap || !classStatsMapMutex) return;
 
   // Copy data under lock, write to file without lock
@@ -156,7 +214,7 @@ static void writeClassLifecycleStatisticsNow() {
 
   // Write to file outside of mutex lock
   const char* path = getStatsPath();
-  std::ofstream file(path);
+  std::ofstream file(path, std::ios::out | std::ios::trunc);
   if (file.is_open()) {
     writeCSVToFile(file, statsCopy);
     fprintf(stderr, "[YSWIFT] Stats written to: %s (%zu classes)\n", path, statsCopy.size());
@@ -187,7 +245,7 @@ static void enumerateAllClassesInTarget() {
   if (!classStatsMap || !classStatsMapMutex)
     return;
 
-  // Load existing stats first
+  // Load existing stats first (outside lock)
   std::unordered_map<std::string, ClassLifecycleStats> existingStats;
   existingStats.reserve(1024); // Pre-allocate for better performance
   parseCSVStats(getStatsPath(), existingStats);
@@ -196,26 +254,34 @@ static void enumerateAllClassesInTarget() {
   unsigned int numClasses = 0;
   Class *classes = objc_copyClassList(&numClasses);
   
-  std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-  
-  if (classes) {
-    for (unsigned int i = 0; i < numClasses; i++) {
-      const char *className = class_getName(classes[i]);
-      if (className && isAppClass(classes[i])) {
-        std::string classNameStr(className);
-        
-        // Check if we have existing stats for this class
-        auto existingIt = existingStats.find(classNameStr);
-        if (existingIt != existingStats.end()) {
-          (*classStatsMap)[classNameStr] = existingIt->second;
-        } else {
-          // New class, initialize with 0,0
-          (*classStatsMap)[classNameStr] = ClassLifecycleStats();
-        }
-      }
-    }
-    free(classes);
+  if (!classes) {
+    fprintf(stderr, "[YSWIFT] No classes found\n");
+    return;
   }
   
-  fprintf(stderr, "[YSWIFT] Found %zu app classes\n", classStatsMap->size());
+  // Process classes under lock
+  {
+    std::lock_guard<std::mutex> lock(*classStatsMapMutex);
+    classStatsMap->reserve(numClasses / 10); // Estimate ~10% are app classes
+    
+    for (unsigned int i = 0; i < numClasses; i++) {
+      const char *className = class_getName(classes[i]);
+      if (!className || !isAppClass(classes[i])) continue;
+      
+      std::string classNameStr(className);
+      
+      // Check if we have existing stats for this class
+      auto existingIt = existingStats.find(classNameStr);
+      if (existingIt != existingStats.end()) {
+        (*classStatsMap)[std::move(classNameStr)] = existingIt->second;
+      } else {
+        // New class, initialize with 0,0
+        (*classStatsMap)[std::move(classNameStr)] = ClassLifecycleStats();
+      }
+    }
+    
+    fprintf(stderr, "[YSWIFT] Found %zu app classes\n", classStatsMap->size());
+  }
+  
+  free(classes);
 }

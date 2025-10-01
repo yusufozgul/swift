@@ -24,6 +24,7 @@ if(SWIFT_RUNTIME_FIXED_BACKTRACER_PATH)
 endif()
 
 set(swift_runtime_objc_sources
+    ClassLifecycleLogging.mm
     ErrorObject.mm
     SwiftObject.mm
     SwiftValue.mm
@@ -38,7 +39,6 @@ set(swift_runtime_sources
     Bincompat.cpp
     BytecodeLayouts.cpp
     Casting.cpp
-    ClassLifecycleLogging.cpp
     CrashReporter.cpp
     Demangle.cpp
     DynamicCast.cpp
