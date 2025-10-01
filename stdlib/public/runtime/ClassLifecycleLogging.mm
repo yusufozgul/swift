@@ -8,6 +8,7 @@
 #include <fstream>
 #include <mutex>
 #include <objc/runtime.h>
+#include <objc/message.h>
 #include <unordered_map>
 #include <CoreFoundation/CoreFoundation.h>
 
@@ -206,7 +207,13 @@ static void ensureTrackingInitialized() {
   }
 }
 
+// Only used on iOS Simulator
+#if TARGET_OS_IOS && TARGET_OS_SIMULATOR
 static void writeClassLifecycleStatisticsNow() {
+#else
+static void writeClassLifecycleStatisticsNow() __attribute__((unused));
+static void writeClassLifecycleStatisticsNow() {
+#endif
   if (!trackingInitialized.load(std::memory_order_acquire)) return;
   if (!classStatsMap || !classStatsMapMutex) return;
 
@@ -246,7 +253,13 @@ static bool isAppClass(Class cls) {
   return strstr(imageName, pattern) && !strstr(imageName, "/Frameworks/");
 }
 
+// Only used on iOS Simulator
+#if TARGET_OS_IOS && TARGET_OS_SIMULATOR
 static void enumerateAllClassesInTarget() {
+#else
+static void enumerateAllClassesInTarget() __attribute__((unused));
+static void enumerateAllClassesInTarget() {
+#endif
   if (!classStatsMap || !classStatsMapMutex)
     return;
 
