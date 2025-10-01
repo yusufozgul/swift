@@ -9,10 +9,7 @@
 #include <mutex>
 #include <objc/runtime.h>
 #include <unordered_map>
-
-#if TARGET_OS_IOS && TARGET_OS_SIMULATOR && defined(__OBJC__)
-  #import <Foundation/Foundation.h>
-#endif
+#include <CoreFoundation/CoreFoundation.h>
 
 using namespace swift;
 
@@ -87,34 +84,56 @@ std::atomic<bool> trackingInitialized{false};
 
 // iOS Simulator termination handler (UITest scenarios)
 static void setupAppTerminationHandler() {
-#if TARGET_OS_IOS && TARGET_OS_SIMULATOR && defined(__OBJC__)
+#if TARGET_OS_IOS && TARGET_OS_SIMULATOR
   // Schedule on main queue to ensure UIApplication is available
   dispatch_async(dispatch_get_main_queue(), ^{
-    @autoreleasepool {
-      NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
-      
-      // Register for UIApplicationWillTerminateNotification (normal app termination)
-      // Using string literal to avoid UIKit dependency
-      [center addObserverForName:@"UIApplicationWillTerminateNotification"
-        object:nil
-        queue:nil
-        usingBlock:^(NSNotification *notification) {
-          fprintf(stderr, "[YSWIFT] *** UIApplication will terminate, writing stats ***\n");
-          writeClassLifecycleStatisticsNow();
-        }];
-      
-      // Register for UIApplicationDidEnterBackgroundNotification (UITest often suspends)
-      // Using string literal to avoid UIKit dependency
-      [center addObserverForName:@"UIApplicationDidEnterBackgroundNotification"
-        object:nil
-        queue:nil
-        usingBlock:^(NSNotification *notification) {
-          fprintf(stderr, "[YSWIFT] *** UIApplication entered background, writing stats ***\n");
-          writeClassLifecycleStatisticsNow();
-        }];
-      
-      fprintf(stderr, "[YSWIFT] iOS Simulator lifecycle handlers registered (terminate + background)\n");
+    // Use pure C/Objective-C runtime APIs to avoid Foundation framework dependency
+    Class NSNotificationCenterClass = objc_getClass("NSNotificationCenter");
+    if (!NSNotificationCenterClass) {
+      fprintf(stderr, "[YSWIFT] NSNotificationCenter not available\n");
+      return;
     }
+    
+    SEL defaultCenterSel = sel_registerName("defaultCenter");
+    id (*defaultCenterImp)(Class, SEL) = (id (*)(Class, SEL))objc_msgSend;
+    id center = defaultCenterImp(NSNotificationCenterClass, defaultCenterSel);
+    
+    if (!center) {
+      fprintf(stderr, "[YSWIFT] Failed to get NSNotificationCenter defaultCenter\n");
+      return;
+    }
+    
+    // Create notification names using CFString
+    id terminateNotificationName = (id)CFStringCreateWithCString(NULL, "UIApplicationWillTerminateNotification", kCFStringEncodingUTF8);
+    id backgroundNotificationName = (id)CFStringCreateWithCString(NULL, "UIApplicationDidEnterBackgroundNotification", kCFStringEncodingUTF8);
+    
+    // Register observers using blocks
+    typedef void (^NotificationBlock)(id notification);
+    
+    NotificationBlock terminateBlock = ^(id notification) {
+      fprintf(stderr, "[YSWIFT] *** UIApplication will terminate, writing stats ***\n");
+      writeClassLifecycleStatisticsNow();
+    };
+    
+    NotificationBlock backgroundBlock = ^(id notification) {
+      fprintf(stderr, "[YSWIFT] *** UIApplication entered background, writing stats ***\n");
+      writeClassLifecycleStatisticsNow();
+    };
+    
+    SEL addObserverSel = sel_registerName("addObserverForName:object:queue:usingBlock:");
+    id (*addObserverImp)(id, SEL, id, id, id, id) = (id (*)(id, SEL, id, id, id, id))objc_msgSend;
+    
+    // Register for terminate notification
+    addObserverImp(center, addObserverSel, terminateNotificationName, nil, nil, terminateBlock);
+    
+    // Register for background notification  
+    addObserverImp(center, addObserverSel, backgroundNotificationName, nil, nil, backgroundBlock);
+    
+    // Release CFStrings
+    if (terminateNotificationName) CFRelease(terminateNotificationName);
+    if (backgroundNotificationName) CFRelease(backgroundNotificationName);
+    
+    fprintf(stderr, "[YSWIFT] iOS Simulator lifecycle handlers registered (terminate + background)\n");
   });
 #else
   // Not running on iOS Simulator - no handlers registered
