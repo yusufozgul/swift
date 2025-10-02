@@ -10,9 +10,7 @@
 #include <objc/runtime.h>
 #include <objc/message.h>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
-#include <dlfcn.h>
 
 using namespace swift;
 
@@ -20,63 +18,32 @@ static void enumerateAllClassesInTarget();
 static void writeClassLifecycleStatisticsNow();
 static void ensureTrackingInitialized();
 
-// Helper functions for CSV handling
 static const char* getStatsPath() {
-  static char cachedPath[512] = {0};
-  static bool initialized = false;
-  
-  if (!initialized) {
+  static char path[512] = {0};
+  if (!path[0]) {
     const char *dir = getenv("SIMULATOR_SHARED_RESOURCES_DIRECTORY");
-    if (dir && strlen(dir) > 0) {
-      snprintf(cachedPath, sizeof(cachedPath), "%s/swift_class_lifecycle_stats.csv", dir);
-    } else {
-      snprintf(cachedPath, sizeof(cachedPath), "swift_class_lifecycle_stats.csv");
-    }
-    initialized = true;
+    snprintf(path, sizeof(path), "%s%sswift_class_lifecycle_stats.csv", 
+             dir && dir[0] ? dir : "", dir && dir[0] ? "/" : "");
   }
-  
-  return cachedPath;
+  return path;
 }
 
-static void writeCSVToFile(std::ofstream& file, const std::unordered_map<std::string, ClassLifecycleStats>& statsMap) {
-  // Write header
-  file << "ClassName,InitCount,DeinitCount\n";
-  
-  // Write all tracked classes (even with 0,0 to preserve tracking state)
-  for (const auto& entry : statsMap) {
-    file << entry.first << ',' << entry.second.initCount << ',' << entry.second.deinitCount << '\n';
-  }
-}
-
-static bool parseCSVStats(const std::string& filePath, std::unordered_map<std::string, ClassLifecycleStats>& stats) {
+static void parseCSVStats(const char* filePath, std::unordered_map<std::string, ClassLifecycleStats>& stats) {
   std::ifstream file(filePath);
-  if (!file.is_open()) return false;
+  if (!file.is_open()) return;
   
   std::string line;
   std::getline(file, line); // Skip header
   
   while (std::getline(file, line)) {
-    size_t comma1 = line.find(',');
-    size_t comma2 = line.find(',', comma1 + 1);
-    if (comma1 == std::string::npos || comma2 == std::string::npos) continue;
+    size_t c1 = line.find(','), c2 = line.find(',', c1 + 1);
+    if (c1 == std::string::npos || c2 == std::string::npos) continue;
     
-    // Parse numbers directly without creating substrings
-    char* endPtr = nullptr;
-    const char* lineData = line.c_str();
-    
-    unsigned long initCount = std::strtoul(lineData + comma1 + 1, &endPtr, 10);
-    if (endPtr == lineData + comma1 + 1) continue; // Parse error
-    
-    unsigned long deinitCount = std::strtoul(lineData + comma2 + 1, &endPtr, 10);
-    if (endPtr == lineData + comma2 + 1) continue; // Parse error
-    
-    // Only create string for the class name
     ClassLifecycleStats stat;
-    stat.initCount = initCount;
-    stat.deinitCount = deinitCount;
-    stats[line.substr(0, comma1)] = stat;
+    stat.initCount = std::strtoul(line.c_str() + c1 + 1, nullptr, 10);
+    stat.deinitCount = std::strtoul(line.c_str() + c2 + 1, nullptr, 10);
+    stats[line.substr(0, c1)] = stat;
   }
-  return true;
 }
 
 namespace {
@@ -85,92 +52,35 @@ std::mutex *classStatsMapMutex = nullptr;
 std::atomic<bool> trackingInitialized{false};
 } // namespace
 
-// iOS Simulator termination handler (UITest scenarios)
 static void setupAppTerminationHandler() {
-#if TARGET_OS_IOS && TARGET_OS_SIMULATOR
-  // Schedule on main queue to ensure UIApplication is available
   dispatch_async(dispatch_get_main_queue(), ^{
-    Class NSNotificationCenterClass = objc_getClass("NSNotificationCenter");
-    if (!NSNotificationCenterClass) {
-      fprintf(stderr, "[YSWIFT] NSNotificationCenter not available\n");
-      return;
-    }
+    id center = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSNotificationCenter"), sel_registerName("defaultCenter"));
+    if (!center) return;
     
-    SEL defaultCenterSel = sel_registerName("defaultCenter");
-    id (*defaultCenterImp)(Class, SEL) = (id (*)(Class, SEL))objc_msgSend;
-    id center = defaultCenterImp(NSNotificationCenterClass, defaultCenterSel);
-    
-    if (!center) {
-      fprintf(stderr, "[YSWIFT] Failed to get NSNotificationCenter defaultCenter\n");
-      return;
-    }
-    
-    // Create NSString notification names using runtime APIs
-    Class NSStringClass = objc_getClass("NSString");
-    SEL stringWithUTF8Sel = sel_registerName("stringWithUTF8String:");
-    id (*stringWithUTF8Imp)(Class, SEL, const char*) = (id (*)(Class, SEL, const char*))objc_msgSend;
-    
-    id terminateNotificationName = stringWithUTF8Imp(NSStringClass, stringWithUTF8Sel, "UIApplicationWillTerminateNotification");
-    id backgroundNotificationName = stringWithUTF8Imp(NSStringClass, stringWithUTF8Sel, "UIApplicationDidEnterBackgroundNotification");
-    
-    // Register observers using blocks
-    typedef void (^NotificationBlock)(id notification);
-    
-    NotificationBlock terminateBlock = ^(id notification) {
-      fprintf(stderr, "[YSWIFT] *** UIApplication will terminate, writing stats ***\n");
-      writeClassLifecycleStatisticsNow();
+    auto makeString = [](const char* str) -> id {
+      return ((id (*)(Class, SEL, const char*))objc_msgSend)(objc_getClass("NSString"), sel_registerName("stringWithUTF8String:"), str);
     };
     
-    NotificationBlock backgroundBlock = ^(id notification) {
-      fprintf(stderr, "[YSWIFT] *** UIApplication entered background, writing stats ***\n");
-      writeClassLifecycleStatisticsNow();
+    auto addObserver = [&](const char* name) {
+      ((id (*)(id, SEL, id, id, id, id))objc_msgSend)(center, sel_registerName("addObserverForName:object:queue:usingBlock:"), 
+        makeString(name), nil, nil, ^(id _) { writeClassLifecycleStatisticsNow(); });
     };
     
-    SEL addObserverSel = sel_registerName("addObserverForName:object:queue:usingBlock:");
-    id (*addObserverImp)(id, SEL, id, id, id, id) = (id (*)(id, SEL, id, id, id, id))objc_msgSend;
-    
-    // Register for terminate notification
-    addObserverImp(center, addObserverSel, terminateNotificationName, nil, nil, terminateBlock);
-    
-    // Register for background notification  
-    addObserverImp(center, addObserverSel, backgroundNotificationName, nil, nil, backgroundBlock);
-    
-    fprintf(stderr, "[YSWIFT] iOS Simulator lifecycle handlers registered (terminate + background)\n");
+    addObserver("UIApplicationWillTerminateNotification");
+    addObserver("UIApplicationDidEnterBackgroundNotification");
   });
-#else
-  // Not running on iOS Simulator - no handlers registered
-  fprintf(stderr, "[YSWIFT] Not on iOS Simulator - no termination handlers registered\n");
-#endif
 }
 
 static void initializeTracking() {
-#if TARGET_OS_IOS && TARGET_OS_SIMULATOR
-  fprintf(stderr, "[YSWIFT] Initializing tracking on iOS Simulator\n");
-  
   classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
   classStatsMapMutex = new std::mutex();
-
-  fprintf(stderr, "[YSWIFT] Enumerating all classes in target...\n");
   enumerateAllClassesInTarget();
-
-  // Register iOS Simulator termination handler (UITest scenarios)
   setupAppTerminationHandler();
-  
-  fprintf(stderr, "[YSWIFT] iOS Simulator: UIApplication notification handlers active\n");
-#else
-  // Not on iOS Simulator - initialize but no handlers
-  fprintf(stderr, "[YSWIFT] Not on iOS Simulator - tracking disabled\n");
-  
-  classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
-  classStatsMapMutex = new std::mutex();
-#endif
+  fprintf(stderr, "[YSWIFT] Tracking initialized\n");
 }
 
 void swift::logClassLifecycle(const HeapObject *object, const char *event) {
-  // Fast path: early exits
   if (!object || !event) return;
-  
-  // Fast path: check initialization without function call overhead
   if (!trackingInitialized.load(std::memory_order_acquire)) {
     ensureTrackingInitialized();
   }
@@ -197,15 +107,12 @@ void swift::logClassLifecycle(const HeapObject *object, const char *event) {
   }
 }
 
-// Alternative initialization check - called separately if needed
 static void ensureTrackingInitialized() {
-  if (!trackingInitialized.load(std::memory_order_acquire)) {
-    static std::once_flag initFlag;
-    std::call_once(initFlag, []() {
-      trackingInitialized.store(true, std::memory_order_release);
-      initializeTracking();
-    });
-  }
+  static std::once_flag initFlag;
+  std::call_once(initFlag, []() {
+    trackingInitialized.store(true, std::memory_order_release);
+    initializeTracking();
+  });
 }
 
 // Only used on iOS Simulator
@@ -226,57 +133,41 @@ static void writeClassLifecycleStatisticsNow() {
   }
 
   // Write to file outside of mutex lock
-  const char* path = getStatsPath();
-  std::ofstream file(path, std::ios::out | std::ios::trunc);
+  std::ofstream file(getStatsPath(), std::ios::out | std::ios::trunc);
   if (file.is_open()) {
-    writeCSVToFile(file, statsCopy);
-    fprintf(stderr, "[YSWIFT] Stats written to: %s (%zu classes)\n", path, statsCopy.size());
-  } else {
-    fprintf(stderr, "[YSWIFT] Failed to write: %s\n", path);
-  }
-}
-
-static bool isAppImageName(const char* imageName) {
-  if (!imageName) return false;
-  
-  // Cache the app name and pattern
-  static const char *appName = getenv("SWIFT_APP_NAME");
-  static char pattern[256];
-  static size_t patternLen = 0;
-  static bool patternInitialized = false;
-  static bool hasAppName = false;
-  
-  if (!patternInitialized) {
-    hasAppName = (appName != nullptr && appName[0] != '\0');
-    if (hasAppName) {
-      patternLen = snprintf(pattern, sizeof(pattern), "%s.app/", appName);
+    file << "ClassName,InitCount,DeinitCount\n";
+    for (const auto& entry : statsCopy) {
+      file << entry.first << ',' << entry.second.initCount << ',' << entry.second.deinitCount << '\n';
     }
-    patternInitialized = true;
+    fprintf(stderr, "[YSWIFT] Stats written to: %s (%zu classes)\n", getStatsPath(), statsCopy.size());
+  } else {
+    fprintf(stderr, "[YSWIFT] Failed to write: %s\n", getStatsPath());
   }
-  
-  // Early exit if no app name configured
-  if (!hasAppName) return false;
-  
-  // Quick length check before strstr
-  size_t imageLen = strlen(imageName);
-  if (imageLen < patternLen) return false;
-  
-  // Use strstr once and cache result
-  const char *appLocation = strstr(imageName, pattern);
-  if (!appLocation) return false;
-  
-  // Check if it's not in Frameworks (strstr is expensive, do it only if needed)
-  return !strstr(imageName, "/Frameworks/");
 }
 
-static bool isAppClass(Class cls, const std::unordered_set<const char*>& appImages) {
+static bool isAppClass(Class cls) {
   if (!cls) return false;
   
   const char *imageName = class_getImageName(cls);
   if (!imageName) return false;
   
-  // Fast lookup in pre-filtered app images set
-  return appImages.find(imageName) != appImages.end();
+  // Cache main executable path
+  static char mainExecPath[512];
+  static bool pathInitialized = false;
+  
+  if (!pathInitialized) {
+    const char *appName = getenv("SWIFT_APP_NAME");
+    if (appName && appName[0] != '\0') {
+      snprintf(mainExecPath, sizeof(mainExecPath), "%s.app/%s", appName, appName);
+    } else {
+      mainExecPath[0] = '\0';
+    }
+    pathInitialized = true;
+  }
+  
+  if (mainExecPath[0] == '\0') return false;
+  
+  return strstr(imageName, mainExecPath) && !strstr(imageName, "/Frameworks/");
 }
 
 // Only used on iOS Simulator
@@ -286,91 +177,49 @@ static void enumerateAllClassesInTarget() {
 static void enumerateAllClassesInTarget() __attribute__((unused));
 static void enumerateAllClassesInTarget() {
 #endif
-  if (!classStatsMap || !classStatsMapMutex)
-    return;
+  if (!classStatsMap || !classStatsMapMutex) return;
 
-  // Step 1: Get all classes
-  unsigned int numClasses = 0;
-  Class *classes = objc_copyClassList(&numClasses);
+  const char *discoverMode = getenv("RUNTIME_DISCOVER");
+  const char *classListPath = getenv("RUNTIME_DISCOVER_RESULT");
+  bool shouldDiscover = discoverMode && strcmp(discoverMode, "true") == 0;
   
-  if (!classes) {
-    fprintf(stderr, "[YSWIFT] No classes found\n");
-    return;
-  }
+  std::vector<std::string> appClassNames;
   
-  fprintf(stderr, "[YSWIFT] Total classes to scan: %u\n", numClasses);
-  
-  // Step 2: Build a set of unique image names (much smaller than class count)
-  std::unordered_set<const char*> uniqueImages;
-  uniqueImages.reserve(256); // Most apps have < 100 images
-  
-  for (unsigned int i = 0; i < numClasses; i++) {
-    const char *imageName = class_getImageName(classes[i]);
-    if (imageName) {
-      uniqueImages.insert(imageName);
+  if (classListPath) {
+    if (shouldDiscover) {
+      unsigned int numClasses = 0;
+      Class *classes = objc_copyClassList(&numClasses);
+      if (classes) {
+        for (unsigned int i = 0; i < numClasses; i++) {
+          if (isAppClass(classes[i])) {
+            const char *name = class_getName(classes[i]);
+            if (name) appClassNames.push_back(name);
+          }
+        }
+        free(classes);
+        
+        std::ofstream file(classListPath);
+        for (const auto& name : appClassNames) file << name << '\n';
+        fprintf(stderr, "[YSWIFT] Discovered %zu classes written to: %s\n", appClassNames.size(), classListPath);
+      }
+    } else {
+      std::ifstream file(classListPath);
+      std::string line;
+      while (std::getline(file, line)) {
+        if (!line.empty()) appClassNames.push_back(line);
+      }
+      fprintf(stderr, "[YSWIFT] Loaded %zu classes from: %s\n", appClassNames.size(), classListPath);
     }
   }
   
-  fprintf(stderr, "[YSWIFT] Found %zu unique images\n", uniqueImages.size());
-  
-  // Step 3: Filter to app images only (this is where the expensive string operations happen)
-  std::unordered_set<const char*> appImages;
-  appImages.reserve(32); // App images are typically very few
-  
-  for (const char* imageName : uniqueImages) {
-    if (isAppImageName(imageName)) {
-      appImages.insert(imageName);
-    }
-  }
-  
-  fprintf(stderr, "[YSWIFT] Filtered to %zu app images\n", appImages.size());
-  
-  // If no app images found, bail early
-  if (appImages.empty()) {
-    free(classes);
-    fprintf(stderr, "[YSWIFT] No app images found, skipping class enumeration\n");
-    return;
-  }
-  
-  // Step 4: Filter classes by app images (fast pointer comparison)
-  std::vector<const char*> appClassNames;
-  appClassNames.reserve(numClasses / 10); // Better estimate for large apps
-  
-  for (unsigned int i = 0; i < numClasses; i++) {
-    if (!isAppClass(classes[i], appImages)) continue;
-    const char *className = class_getName(classes[i]);
-    if (className) {
-      appClassNames.push_back(className);
-    }
-  }
-  
-  free(classes); // Free early, we're done with the class list
-  
-  fprintf(stderr, "[YSWIFT] Filtered to %zu app classes\n", appClassNames.size());
-  
-  // Step 5: Load existing stats (outside lock)
+  // Load existing stats and populate tracking map
   std::unordered_map<std::string, ClassLifecycleStats> existingStats;
-  existingStats.reserve(appClassNames.size());
   parseCSVStats(getStatsPath(), existingStats);
   
-  // Step 6: Populate stats map under lock (minimize lock time)
-  {
-    std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-    classStatsMap->reserve(appClassNames.size());
-    
-    for (const char* className : appClassNames) {
-      std::string classNameStr(className);
-      
-      // Check if we have existing stats for this class
-      auto existingIt = existingStats.find(classNameStr);
-      if (existingIt != existingStats.end()) {
-        (*classStatsMap)[std::move(classNameStr)] = existingIt->second;
-      } else {
-        // New class, initialize with 0,0
-        (*classStatsMap)[std::move(classNameStr)] = ClassLifecycleStats();
-      }
-    }
-    
-    fprintf(stderr, "[YSWIFT] Loaded %zu app classes into tracking map\n", classStatsMap->size());
+  std::lock_guard<std::mutex> lock(*classStatsMapMutex);
+  classStatsMap->reserve(appClassNames.size());
+  for (auto& name : appClassNames) {
+    auto it = existingStats.find(name);
+    (*classStatsMap)[name] = it != existingStats.end() ? it->second : ClassLifecycleStats();
   }
 }
