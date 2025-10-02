@@ -35,6 +35,9 @@ mixin-preset=buildbot_osx_package,no_test
 skip-build-tvos
 skip-build-watchos
 skip-build-xros
+
+# Disable embedded stdlib to avoid armv6 serialization crash
+build-swift-stdlib-enable-embedded=0
 EOF
 
 ./utils/build-script \
