@@ -25,10 +25,22 @@ if ! sed '/^infer-cross-compile-hosts-on-darwin$/d' utils/build-presets.ini > "$
     exit 1
 fi
 
+# Add custom preset for iOS-only build (much faster)
+cat >> "$TEMP_PRESET_FILE" << 'EOF'
+
+# Custom preset: iOS-only build for faster compilation
+[preset: buildbot_osx_package,no_test,ios_only]
+mixin-preset=buildbot_osx_package,no_test
+
+skip-build-tvos
+skip-build-watchos
+skip-build-xros
+EOF
+
 ./utils/build-script \
     --sccache \
     --preset-file=$TEMP_PRESET_FILE \
-    --preset="buildbot_osx_package,no_test" \
+    --preset="buildbot_osx_package,no_test,ios_only" \
     install_destdir="$INSTALL_DIR" \
     install_prefix="swift-LOCAL-a.xctoolchain/usr" \
     install_symroot="$WORK_DIR/symbols" \
