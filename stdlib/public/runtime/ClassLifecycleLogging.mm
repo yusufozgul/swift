@@ -11,6 +11,7 @@
 #include <objc/message.h>
 #include <unordered_map>
 #include <vector>
+#include <mach-o/dyld.h>
 
 using namespace swift;
 
@@ -91,17 +92,15 @@ void swift::logClassLifecycle(const HeapObject *object, const char *event) {
   // Get the qualified (full module) name from metadata
   std::string qualifiedName = nameForMetadata(metadata, true);
   if (qualifiedName.empty() || !classStatsMap) return;
+  if (classStatsMap->empty()) return;
 
   {
     std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-    
-    // Early exit if class not tracked
     auto it = classStatsMap->find(qualifiedName);
     if (it == classStatsMap->end()) {
       return;
     }
 
-    // Update stats - branchless comparison
     it->second.initCount += (event[0] == 'I');
     it->second.deinitCount += (event[0] == 'D');
   }
@@ -151,23 +150,24 @@ static bool isAppClass(Class cls) {
   const char *imageName = class_getImageName(cls);
   if (!imageName) return false;
   
-  // Cache main executable path
-  static char mainExecPath[512];
+  // Cache main executable path - automatically determined at runtime
+  static const char *mainExecPath = nullptr;
   static bool pathInitialized = false;
   
   if (!pathInitialized) {
-    const char *appName = getenv("SWIFT_APP_NAME");
-    if (appName && appName[0] != '\0') {
-      snprintf(mainExecPath, sizeof(mainExecPath), "%s.app/%s", appName, appName);
-    } else {
-      mainExecPath[0] = '\0';
-    }
+    // Get the first loaded image (main executable) from dyld
+    mainExecPath = _dyld_get_image_name(0);
     pathInitialized = true;
+    
+    if (mainExecPath) {
+      fprintf(stderr, "[YSWIFT] Main executable path: %s\n", mainExecPath);
+    } else {
+      fprintf(stderr, "[YSWIFT] Failed to get main executable path\n");
+    }
   }
   
-  if (mainExecPath[0] == '\0') return false;
-  
-  return strstr(imageName, mainExecPath) && !strstr(imageName, "/Frameworks/");
+  if (!mainExecPath) return false;
+  return strcmp(imageName, mainExecPath) == 0;
 }
 
 // Only used on iOS Simulator
@@ -201,6 +201,8 @@ static void enumerateAllClassesInTarget() {
         std::ofstream file(classListPath);
         for (const auto& name : appClassNames) file << name << '\n';
         fprintf(stderr, "[YSWIFT] Discovered %zu classes written to: %s\n", appClassNames.size(), classListPath);
+        fprintf(stderr, "[YSWIFT] Discovery completed, exiting application\n");
+        exit(0);
       }
     } else {
       std::ifstream file(classListPath);
@@ -212,14 +214,33 @@ static void enumerateAllClassesInTarget() {
     }
   }
   
-  // Load existing stats and populate tracking map
-  std::unordered_map<std::string, ClassLifecycleStats> existingStats;
-  parseCSVStats(getStatsPath(), existingStats);
+  // Only populate classStatsMap if appClassNames is not empty
+  if (appClassNames.empty()) {
+    fprintf(stderr, "[YSWIFT] No classes to track, skipping initialization\n");
+    return;
+  }
   
   std::lock_guard<std::mutex> lock(*classStatsMapMutex);
   classStatsMap->reserve(appClassNames.size());
   for (auto& name : appClassNames) {
+    (*classStatsMap)[name] = ClassLifecycleStats();
+  }
+  
+  std::unordered_map<std::string, ClassLifecycleStats> existingStats;
+  parseCSVStats(getStatsPath(), existingStats);
+  for (auto& name : appClassNames) {
     auto it = existingStats.find(name);
-    (*classStatsMap)[name] = it != existingStats.end() ? it->second : ClassLifecycleStats();
+    if (it != existingStats.end()) {
+      (*classStatsMap)[name] = it->second;
+    }
   }
 }
+
+/*
+ * SIMULATOR_SHARED_RESOURCES_DIRECTORY
+ * RUNTIME_DISCOVER
+ *   - Set to "true" to enable class discovery mode (scans all classes, writes to file, then exits)
+ *
+ * RUNTIME_DISCOVER_RESULT
+ *   - File path for reading/writing the list of classes to track
+ */
