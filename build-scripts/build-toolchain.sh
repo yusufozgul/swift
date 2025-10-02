@@ -37,7 +37,7 @@ skip-build-watchos
 skip-build-xros
 
 # Disable embedded stdlib to avoid armv6 serialization crash
-build-swift-stdlib-enable-embedded=0
+build-embedded-stdlib=0
 EOF
 
 ./utils/build-script \
