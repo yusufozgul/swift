@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 #include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 
 using namespace swift;
 
@@ -155,9 +156,17 @@ static bool isAppClass(Class cls) {
   static bool pathInitialized = false;
   
   if (!pathInitialized) {
-    // Get the first loaded image (main executable) from dyld
-    mainExecPath = _dyld_get_image_name(0);
     pathInitialized = true;
+    
+    // Find the main executable by looking for MH_EXECUTE header type
+    uint32_t imageCount = _dyld_image_count();
+    for (uint32_t i = 0; i < imageCount; i++) {
+      const struct mach_header *header = _dyld_get_image_header(i);
+      if (header && header->filetype == MH_EXECUTE) {
+        mainExecPath = _dyld_get_image_name(i);
+        break;
+      }
+    }
     
     if (mainExecPath) {
       fprintf(stderr, "[YSWIFT] Main executable path: %s\n", mainExecPath);
