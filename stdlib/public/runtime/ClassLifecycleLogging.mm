@@ -198,11 +198,22 @@ static void enumerateAllClassesInTarget() {
     if (shouldDiscover) {
       unsigned int numClasses = 0;
       Class *classes = objc_copyClassList(&numClasses);
+      fprintf(stderr, "[YSWIFT] Total classes in runtime: %u\n", numClasses);
+      
       if (classes) {
         for (unsigned int i = 0; i < numClasses; i++) {
+          const char *className = class_getName(classes[i]);
+          const char *imageName = class_getImageName(classes[i]);
+          
+          // Debug: Print first 10 classes
+          if (i < 10) {
+            fprintf(stderr, "[YSWIFT] Class[%u]: %s from %s\n", i, 
+                    className ? className : "NULL", 
+                    imageName ? imageName : "NULL");
+          }
+          
           if (isAppClass(classes[i])) {
-            const char *name = class_getName(classes[i]);
-            if (name) appClassNames.push_back(name);
+            if (className) appClassNames.push_back(className);
           }
         }
         free(classes);
