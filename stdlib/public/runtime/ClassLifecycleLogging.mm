@@ -201,6 +201,7 @@ static void enumerateAllClassesInTarget() {
       fprintf(stderr, "[YSWIFT] Total classes in runtime: %u\n", numClasses);
       
       if (classes) {
+        unsigned int appClassCount = 0;
         for (unsigned int i = 0; i < numClasses; i++) {
           const char *className = class_getName(classes[i]);
           const char *imageName = class_getImageName(classes[i]);
@@ -212,10 +213,20 @@ static void enumerateAllClassesInTarget() {
                     imageName ? imageName : "NULL");
           }
           
+          // Debug: Print classes that contain "Trendyol" in their image path
+          if (imageName && strstr(imageName, "Trendyol.app") != nullptr) {
+            if (appClassCount < 20) {
+              fprintf(stderr, "[YSWIFT] AppClass[%u]: %s from %s\n", appClassCount, 
+                      className ? className : "NULL", imageName);
+            }
+            appClassCount++;
+          }
+          
           if (isAppClass(classes[i])) {
             if (className) appClassNames.push_back(className);
           }
         }
+        fprintf(stderr, "[YSWIFT] Total classes from Trendyol.app: %u\n", appClassCount);
         free(classes);
         
         std::ofstream file(classListPath);
