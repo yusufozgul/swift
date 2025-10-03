@@ -147,36 +147,28 @@ static void writeClassLifecycleStatisticsNow() {
 
 static bool isAppClass(Class cls) {
   if (!cls) return false;
-  
   const char *imageName = class_getImageName(cls);
   if (!imageName) return false;
   
-  // Cache main executable path - automatically determined at runtime
-  static const char *mainExecPath = nullptr;
-  static bool pathInitialized = false;
-  
-  if (!pathInitialized) {
-    pathInitialized = true;
-    
-    // Find the main executable by looking for MH_EXECUTE header type
-    uint32_t imageCount = _dyld_image_count();
-    for (uint32_t i = 0; i < imageCount; i++) {
-      const struct mach_header *header = _dyld_get_image_header(i);
-      if (header && header->filetype == MH_EXECUTE) {
-        mainExecPath = _dyld_get_image_name(i);
+  static char bundlePath[512] = {0};
+  if (!bundlePath[0]) {
+    for (uint32_t i = 0, n = _dyld_image_count(); i < n; i++) {
+      const struct mach_header *hdr = _dyld_get_image_header(i);
+      if (hdr && hdr->filetype == MH_EXECUTE) {
+        const char *path = _dyld_get_image_name(i);
+        const char *app = path ? strstr(path, ".app/") : nullptr;
+        if (app && (app - path + 5) < sizeof(bundlePath)) {
+          snprintf(bundlePath, sizeof(bundlePath), "%.*s", (int)(app - path + 5), path);
+          fprintf(stderr, "[YSWIFT] Main bundle path: %s\n", bundlePath);
+        }
         break;
       }
     }
-    
-    if (mainExecPath) {
-      fprintf(stderr, "[YSWIFT] Main executable path: %s\n", mainExecPath);
-    } else {
-      fprintf(stderr, "[YSWIFT] Failed to get main executable path\n");
-    }
   }
   
-  if (!mainExecPath) return false;
-  return strcmp(imageName, mainExecPath) == 0;
+  if (!bundlePath[0] || strncmp(imageName, bundlePath, strlen(bundlePath)) != 0) return false;
+  // Exclude classes from Frameworks folder
+  return strstr(imageName, "/Frameworks/") == nullptr;
 }
 
 // Only used on iOS Simulator
@@ -198,35 +190,14 @@ static void enumerateAllClassesInTarget() {
     if (shouldDiscover) {
       unsigned int numClasses = 0;
       Class *classes = objc_copyClassList(&numClasses);
-      fprintf(stderr, "[YSWIFT] Total classes in runtime: %u\n", numClasses);
       
       if (classes) {
-        unsigned int appClassCount = 0;
         for (unsigned int i = 0; i < numClasses; i++) {
-          const char *className = class_getName(classes[i]);
-          const char *imageName = class_getImageName(classes[i]);
-          
-          // Debug: Print first 10 classes
-          if (i < 10) {
-            fprintf(stderr, "[YSWIFT] Class[%u]: %s from %s\n", i, 
-                    className ? className : "NULL", 
-                    imageName ? imageName : "NULL");
-          }
-          
-          // Debug: Print classes that contain "Trendyol" in their image path
-          if (imageName && strstr(imageName, "Trendyol.app") != nullptr) {
-            if (appClassCount < 20) {
-              fprintf(stderr, "[YSWIFT] AppClass[%u]: %s from %s\n", appClassCount, 
-                      className ? className : "NULL", imageName);
-            }
-            appClassCount++;
-          }
-          
           if (isAppClass(classes[i])) {
-            if (className) appClassNames.push_back(className);
+            const char *name = class_getName(classes[i]);
+            if (name) appClassNames.push_back(name);
           }
         }
-        fprintf(stderr, "[YSWIFT] Total classes from Trendyol.app: %u\n", appClassCount);
         free(classes);
         
         std::ofstream file(classListPath);
