@@ -4,80 +4,121 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
-#include <dispatch/dispatch.h>
 #include <fstream>
 #include <mutex>
 #include <objc/runtime.h>
-#include <objc/message.h>
 #include <unordered_map>
 #include <vector>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <pthread.h>
 
 using namespace swift;
 
 static void enumerateAllClassesInTarget();
-static void writeClassLifecycleStatisticsNow();
 static void ensureTrackingInitialized();
 
-static const char* getStatsPath() {
-  static char path[512] = {0};
-  if (!path[0]) {
-    const char *dir = getenv("SIMULATOR_SHARED_RESOURCES_DIRECTORY");
-    snprintf(path, sizeof(path), "%s%sswift_class_lifecycle_stats.csv", 
-             dir && dir[0] ? dir : "", dir && dir[0] ? "/" : "");
+// Shared memory structure for inter-process communication
+constexpr size_t MAX_CLASS_NAME_LENGTH = 256;
+constexpr size_t MAX_CLASSES = 10000;
+
+struct ClassStats {
+  uint64_t initCount;
+  uint64_t deinitCount;
+};
+
+struct SharedMemoryEntry {
+  char className[MAX_CLASS_NAME_LENGTH];
+  ClassStats stats;
+};
+
+constexpr size_t SHARED_MEMORY_SIZE = sizeof(pthread_mutex_t) + sizeof(uint32_t) + 
+                                      (MAX_CLASSES * sizeof(SharedMemoryEntry));
+
+struct SharedMemoryHeader {
+  pthread_mutex_t mutex;
+  uint32_t classCount;
+  SharedMemoryEntry entries[MAX_CLASSES];
+};
+
+static constexpr const char* SHARED_MEMORY_NAME = "/swift_class_lifecycle";
+
+static SharedMemoryHeader* sharedMemory = nullptr;
+
+static void initializeSharedMemory() {
+  // Try to open existing shared memory first
+  int fd = shm_open(SHARED_MEMORY_NAME, O_RDWR, 0666);
+  bool isNew = false;
+  
+  if (fd < 0) {
+    // Create new shared memory if it doesn't exist
+    fd = shm_open(SHARED_MEMORY_NAME, O_CREAT | O_RDWR, 0666);
+    isNew = true;
+    
+    if (fd < 0) {
+      fprintf(stderr, "[YSWIFT] Failed to create shared memory: %s\n", strerror(errno));
+      return;
+    }
+    
+    if (ftruncate(fd, SHARED_MEMORY_SIZE) < 0) {
+      fprintf(stderr, "[YSWIFT] Failed to set shared memory size: %s\n", strerror(errno));
+      close(fd);
+      return;
+    }
   }
-  return path;
+  
+  // Map shared memory
+  void *addr = mmap(NULL, SHARED_MEMORY_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  close(fd);
+  
+  if (addr == MAP_FAILED) {
+    fprintf(stderr, "[YSWIFT] Failed to map shared memory: %s\n", strerror(errno));
+    return;
+  }
+  
+  sharedMemory = static_cast<SharedMemoryHeader*>(addr);
+  
+  // Initialize mutex with process-shared attribute if this is new
+  if (isNew) {
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+    pthread_mutex_init(&sharedMemory->mutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+    sharedMemory->classCount = 0;
+    fprintf(stderr, "[YSWIFT] Created new shared memory\n");
+  } else {
+    fprintf(stderr, "[YSWIFT] Attached to existing shared memory\n");
+  }
 }
 
-static void parseCSVStats(const char* filePath, std::unordered_map<std::string, ClassLifecycleStats>& stats) {
-  std::ifstream file(filePath);
-  if (!file.is_open()) return;
+static inline void parseSharedMemoryStats(std::unordered_map<std::string, ClassStats>& stats) {
+  if (!sharedMemory) return;
   
-  std::string line;
-  std::getline(file, line); // Skip header
-  
-  while (std::getline(file, line)) {
-    size_t c1 = line.find(','), c2 = line.find(',', c1 + 1);
-    if (c1 == std::string::npos || c2 == std::string::npos) continue;
-    
-    ClassLifecycleStats stat;
-    stat.initCount = std::strtoul(line.c_str() + c1 + 1, nullptr, 10);
-    stat.deinitCount = std::strtoul(line.c_str() + c2 + 1, nullptr, 10);
-    stats[line.substr(0, c1)] = stat;
+  pthread_mutex_lock(&sharedMemory->mutex);
+  for (uint32_t i = 0; i < sharedMemory->classCount && i < MAX_CLASSES; i++) {
+    stats[sharedMemory->entries[i].className] = sharedMemory->entries[i].stats;
   }
+  pthread_mutex_unlock(&sharedMemory->mutex);
 }
 
 namespace {
-std::unordered_map<std::string, ClassLifecycleStats> *classStatsMap = nullptr;
+std::unordered_map<std::string, ClassStats> *classStatsMap = nullptr;
+std::unordered_map<std::string, uint32_t> *classIndexMap = nullptr; // Maps class name to shared memory index
 std::mutex *classStatsMapMutex = nullptr;
 std::atomic<bool> trackingInitialized{false};
 } // namespace
 
-static void setupAppTerminationHandler() {
-  dispatch_async(dispatch_get_main_queue(), ^{
-    id center = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSNotificationCenter"), sel_registerName("defaultCenter"));
-    if (!center) return;
-    
-    auto makeString = [](const char* str) -> id {
-      return ((id (*)(Class, SEL, const char*))objc_msgSend)(objc_getClass("NSString"), sel_registerName("stringWithUTF8String:"), str);
-    };
-    
-    auto addObserver = [&](const char* name) {
-      ((id (*)(id, SEL, id, id, id, id))objc_msgSend)(center, sel_registerName("addObserverForName:object:queue:usingBlock:"), 
-        makeString(name), nil, nil, ^(id _) { writeClassLifecycleStatisticsNow(); });
-    };
-    
-    addObserver("UIApplicationWillTerminateNotification");
-    addObserver("UIApplicationDidEnterBackgroundNotification");
-  });
-}
-
 static void initializeTracking() {
-  classStatsMap = new std::unordered_map<std::string, ClassLifecycleStats>();
+  classStatsMap = new std::unordered_map<std::string, ClassStats>();
+  classIndexMap = new std::unordered_map<std::string, uint32_t>();
   classStatsMapMutex = new std::mutex();
+  initializeSharedMemory();
   enumerateAllClassesInTarget();
-  setupAppTerminationHandler();
   fprintf(stderr, "[YSWIFT] Tracking initialized\n");
 }
 
@@ -89,21 +130,39 @@ void swift::logClassLifecycle(const HeapObject *object, const char *event) {
   
   const HeapMetadata *metadata = object->metadata;
   if (!metadata || metadata->getKind() != MetadataKind::Class) return;
+  if (!classStatsMap || !classIndexMap || !sharedMemory) return;
   
   // Get the qualified (full module) name from metadata
   std::string qualifiedName = nameForMetadata(metadata, true);
-  if (qualifiedName.empty() || !classStatsMap) return;
-  if (classStatsMap->empty()) return;
+  if (qualifiedName.empty()) return;
 
-  {
-    std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-    auto it = classStatsMap->find(qualifiedName);
-    if (it == classStatsMap->end()) {
-      return;
-    }
+  // Determine if this is init or deinit
+  const bool isInit = (event[0] == 'I');
+  const bool isDeinit = (event[0] == 'D');
+  if (!isInit && !isDeinit) return;
 
-    it->second.initCount += (event[0] == 'I');
-    it->second.deinitCount += (event[0] == 'D');
+  std::lock_guard<std::mutex> lock(*classStatsMapMutex);
+  
+  // Check if we're tracking this class
+  auto statsIt = classStatsMap->find(qualifiedName);
+  if (statsIt == classStatsMap->end()) return;
+  
+  auto indexIt = classIndexMap->find(qualifiedName);
+  if (indexIt == classIndexMap->end()) return;
+  
+  // Update local stats
+  if (isInit) {
+    statsIt->second.initCount++;
+  } else {
+    statsIt->second.deinitCount++;
+  }
+  
+  // Update shared memory with O(1) index lookup
+  uint32_t index = indexIt->second;
+  if (index < sharedMemory->classCount) {
+    pthread_mutex_lock(&sharedMemory->mutex);
+    sharedMemory->entries[index].stats = statsIt->second;
+    pthread_mutex_unlock(&sharedMemory->mutex);
   }
 }
 
@@ -115,42 +174,13 @@ static void ensureTrackingInitialized() {
   });
 }
 
-// Only used on iOS Simulator
-#if TARGET_OS_IOS && TARGET_OS_SIMULATOR
-static void writeClassLifecycleStatisticsNow() {
-#else
-static void writeClassLifecycleStatisticsNow() __attribute__((unused));
-static void writeClassLifecycleStatisticsNow() {
-#endif
-  if (!trackingInitialized.load(std::memory_order_acquire)) return;
-  if (!classStatsMap || !classStatsMapMutex) return;
-
-  // Copy data under lock, write to file without lock
-  std::unordered_map<std::string, ClassLifecycleStats> statsCopy;
-  {
-    std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-    statsCopy = *classStatsMap;
-  }
-
-  // Write to file outside of mutex lock
-  std::ofstream file(getStatsPath(), std::ios::out | std::ios::trunc);
-  if (file.is_open()) {
-    file << "ClassName,InitCount,DeinitCount\n";
-    for (const auto& entry : statsCopy) {
-      file << entry.first << ',' << entry.second.initCount << ',' << entry.second.deinitCount << '\n';
-    }
-    fprintf(stderr, "[YSWIFT] Stats written to: %s (%zu classes)\n", getStatsPath(), statsCopy.size());
-  } else {
-    fprintf(stderr, "[YSWIFT] Failed to write: %s\n", getStatsPath());
-  }
-}
-
 static bool isAppClass(Class cls) {
   if (!cls) return false;
   const char *imageName = class_getImageName(cls);
   if (!imageName) return false;
   
   static char bundlePath[512] = {0};
+  static size_t bundlePathLen = 0;
   if (!bundlePath[0]) {
     for (uint32_t i = 0, n = _dyld_image_count(); i < n; i++) {
       const struct mach_header *hdr = _dyld_get_image_header(i);
@@ -158,7 +188,8 @@ static bool isAppClass(Class cls) {
         const char *path = _dyld_get_image_name(i);
         const char *app = path ? strstr(path, ".app/") : nullptr;
         if (app && (app - path + 5) < sizeof(bundlePath)) {
-          snprintf(bundlePath, sizeof(bundlePath), "%.*s", (int)(app - path + 5), path);
+          bundlePathLen = (size_t)(app - path + 5);
+          snprintf(bundlePath, sizeof(bundlePath), "%.*s", (int)bundlePathLen, path);
           fprintf(stderr, "[YSWIFT] Main bundle path: %s\n", bundlePath);
         }
         break;
@@ -166,7 +197,7 @@ static bool isAppClass(Class cls) {
     }
   }
   
-  if (!bundlePath[0] || strncmp(imageName, bundlePath, strlen(bundlePath)) != 0) return false;
+  if (!bundlePath[0] || strncmp(imageName, bundlePath, bundlePathLen) != 0) return false;
   // Exclude classes from Frameworks folder
   return strstr(imageName, "/Frameworks/") == nullptr;
 }
@@ -224,25 +255,50 @@ static void enumerateAllClassesInTarget() {
   
   std::lock_guard<std::mutex> lock(*classStatsMapMutex);
   classStatsMap->reserve(appClassNames.size());
-  for (auto& name : appClassNames) {
-    (*classStatsMap)[name] = ClassLifecycleStats();
+  classIndexMap->reserve(appClassNames.size());
+  
+  // Load existing stats from shared memory first
+  std::unordered_map<std::string, ClassStats> existingStats;
+  parseSharedMemoryStats(existingStats);
+  
+  // Initialize local map with existing stats or zeros
+  for (const auto& name : appClassNames) {
+    auto it = existingStats.find(name);
+    (*classStatsMap)[name] = (it != existingStats.end()) ? it->second : ClassStats{0, 0};
   }
   
-  std::unordered_map<std::string, ClassLifecycleStats> existingStats;
-  parseCSVStats(getStatsPath(), existingStats);
-  for (auto& name : appClassNames) {
-    auto it = existingStats.find(name);
-    if (it != existingStats.end()) {
-      (*classStatsMap)[name] = it->second;
+  // Sync all classes to shared memory and build index map
+  if (sharedMemory) {
+    pthread_mutex_lock(&sharedMemory->mutex);
+    uint32_t idx = 0;
+    for (const auto& entry : *classStatsMap) {
+      if (idx >= MAX_CLASSES) break;
+      
+      // Store class info in shared memory
+      strncpy(sharedMemory->entries[idx].className, entry.first.c_str(), MAX_CLASS_NAME_LENGTH - 1);
+      sharedMemory->entries[idx].className[MAX_CLASS_NAME_LENGTH - 1] = '\0';
+      sharedMemory->entries[idx].stats = entry.second;
+      
+      // Build index mapping for O(1) lookup
+      (*classIndexMap)[entry.first] = idx;
+      idx++;
     }
+    sharedMemory->classCount = idx;
+    pthread_mutex_unlock(&sharedMemory->mutex);
+    fprintf(stderr, "[YSWIFT] Synced %u classes to shared memory with index mapping\n", idx);
   }
 }
 
 /*
- * SIMULATOR_SHARED_RESOURCES_DIRECTORY
+ * Environment Variables:
+ * 
  * RUNTIME_DISCOVER
  *   - Set to "true" to enable class discovery mode (scans all classes, writes to file, then exits)
  *
  * RUNTIME_DISCOVER_RESULT
  *   - File path for reading/writing the list of classes to track
+ *
+ * Shared Memory:
+ *   - Shared memory name: /swift_class_lifecycle
+ *   - shm_unlink /swift_class_lifecycle
  */

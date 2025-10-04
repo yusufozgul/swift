@@ -1,18 +1,9 @@
 #ifndef SWIFT_RUNTIME_CLASSLIFECYCLELOGGING_H
 #define SWIFT_RUNTIME_CLASSLIFECYCLELOGGING_H
 
-#include "swift/Runtime/Metadata.h"
 #include "swift/Runtime/HeapObject.h"
 
 namespace swift {
-
-/// Statistics for a single class
-struct ClassLifecycleStats {
-  unsigned long initCount;
-  unsigned long deinitCount;
-  
-  ClassLifecycleStats() : initCount(0), deinitCount(0) {}
-};
 
 /// Log class lifecycle events (initialization and deinitialization)
 /// for debugging and monitoring purposes.
