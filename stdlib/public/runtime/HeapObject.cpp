@@ -47,7 +47,7 @@
 # include <malloc_type_private.h>
 #endif
 #include "Leaks.h"
-#include "ClassLifecycleLogging.h"
+#include "RuntimeAnalysis/ClassTracker.h"
 
 using namespace swift;
 

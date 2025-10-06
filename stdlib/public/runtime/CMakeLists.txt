@@ -24,7 +24,9 @@ if(SWIFT_RUNTIME_FIXED_BACKTRACER_PATH)
 endif()
 
 set(swift_runtime_objc_sources
-    ClassLifecycleLogging.mm
+    RuntimeAnalysis/ClassDiscover.mm
+    RuntimeAnalysis/SharedMemory.mm
+    RuntimeAnalysis/ClassTracker.mm
     ErrorObject.mm
     SwiftObject.mm
     SwiftValue.mm
