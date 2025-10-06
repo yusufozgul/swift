@@ -11,23 +11,8 @@
 
 using namespace swift;
 
-// Shared memory structure for inter-process communication
-constexpr size_t MAX_CLASS_NAME_LENGTH = 256;
-constexpr size_t MAX_CLASSES = 10000;
-
-struct SharedMemoryEntry {
-  char className[MAX_CLASS_NAME_LENGTH];
-  ClassStats stats;
-};
-
 constexpr size_t SHARED_MEMORY_SIZE = sizeof(pthread_mutex_t) + sizeof(uint32_t) +
                                       (MAX_CLASSES * sizeof(SharedMemoryEntry));
-
-struct SharedMemoryHeader {
-  pthread_mutex_t mutex;
-  uint32_t classCount;
-  SharedMemoryEntry entries[MAX_CLASSES];
-};
 
 static constexpr const char* SHARED_MEMORY_NAME = "/swift_class_lifecycle";
 

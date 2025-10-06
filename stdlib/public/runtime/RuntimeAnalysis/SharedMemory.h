@@ -4,13 +4,29 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <pthread.h>
 
 namespace swift {
+
+// Shared memory structure for inter-process communication
+constexpr size_t MAX_CLASS_NAME_LENGTH = 256;
+constexpr size_t MAX_CLASSES = 10000;
 
 /// Statistics for class lifecycle events
 struct ClassStats {
   uint64_t initCount;
   uint64_t deinitCount;
+};
+
+struct SharedMemoryEntry {
+  char className[MAX_CLASS_NAME_LENGTH];
+  ClassStats stats;
+};
+
+struct SharedMemoryHeader {
+  pthread_mutex_t mutex;
+  uint32_t classCount;
+  SharedMemoryEntry entries[MAX_CLASSES];
 };
 
 /// Initialize shared memory for inter-process communication
@@ -35,7 +51,7 @@ void updateSharedMemoryStats(const std::string& className, uint32_t index, const
 
 /// Get direct access to shared memory header (for advanced usage)
 /// \returns Pointer to shared memory header or nullptr if not initialized
-struct SharedMemoryHeader* getSharedMemory();
+SharedMemoryHeader* getSharedMemory();
 
 } // namespace swift
 

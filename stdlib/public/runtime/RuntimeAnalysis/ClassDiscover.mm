@@ -23,7 +23,7 @@ static bool isAppClass(Class cls) {
       if (hdr && hdr->filetype == MH_EXECUTE) {
         const char *path = _dyld_get_image_name(i);
         const char *app = path ? strstr(path, ".app/") : nullptr;
-        if (app && (app - path + 5) < sizeof(bundlePath)) {
+        if (app && (size_t)(app - path + 5) < sizeof(bundlePath)) {
           bundlePathLen = (size_t)(app - path + 5);
           snprintf(bundlePath, sizeof(bundlePath), "%.*s", (int)bundlePathLen, path);
           fprintf(stderr, "[YSWIFT] Main bundle path: %s\n", bundlePath);
