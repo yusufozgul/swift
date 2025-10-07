@@ -113,13 +113,13 @@ void swift::logAssetAccess(const char* bundleID, const char* resourceName) {
 // ============================================================================
 
 // Function pointer types for original CFBundle functions
-typedef CFURLRef (*CFBundleGetResourceURLFunc)(CFBundleRef bundle, CFStringRef resourceName,
-                                                CFStringRef resourceType, CFStringRef subDirName);
+typedef CFURLRef (*CFBundleCopyResourceURLFunc)(CFBundleRef bundle, CFStringRef resourceName,
+                                                 CFStringRef resourceType, CFStringRef subDirName);
 
 typedef void* (*CFBundleGetDataPointerForNameFunc)(CFBundleRef bundle, CFStringRef symbolName);
 
 // Store original function pointers
-static CFBundleGetResourceURLFunc original_CFBundleGetResourceURL = nullptr;
+static CFBundleCopyResourceURLFunc original_CFBundleCopyResourceURL = nullptr;
 static CFBundleGetDataPointerForNameFunc original_CFBundleGetDataPointerForName = nullptr;
 
 // Helper: Get bundle identifier from CFBundleRef
@@ -148,12 +148,12 @@ static const char* getResourceNameFromCFString(CFStringRef resourceName) {
   return nullptr;
 }
 
-// Hooked version of CFBundleGetResourceURL
-static CFURLRef hooked_CFBundleGetResourceURL(CFBundleRef bundle, CFStringRef resourceName,
-                                               CFStringRef resourceType, CFStringRef subDirName) {
+// Hooked version of CFBundleCopyResourceURL
+static CFURLRef hooked_CFBundleCopyResourceURL(CFBundleRef bundle, CFStringRef resourceName,
+                                                CFStringRef resourceType, CFStringRef subDirName) {
   // Get original function pointer if not set
-  if (!original_CFBundleGetResourceURL) {
-    original_CFBundleGetResourceURL = (CFBundleGetResourceURLFunc)dlsym(RTLD_NEXT, "CFBundleGetResourceURL");
+  if (!original_CFBundleCopyResourceURL) {
+    original_CFBundleCopyResourceURL = (CFBundleCopyResourceURLFunc)dlsym(RTLD_NEXT, "CFBundleCopyResourceURL");
   }
 
   // Log the asset access
@@ -165,8 +165,8 @@ static CFURLRef hooked_CFBundleGetResourceURL(CFBundleRef bundle, CFStringRef re
   }
 
   // Call original function
-  if (original_CFBundleGetResourceURL) {
-    return original_CFBundleGetResourceURL(bundle, resourceName, resourceType, subDirName);
+  if (original_CFBundleCopyResourceURL) {
+    return original_CFBundleCopyResourceURL(bundle, resourceName, resourceType, subDirName);
   }
 
   return nullptr;
@@ -205,5 +205,5 @@ static void* hooked_CFBundleGetDataPointerForName(CFBundleRef bundle, CFStringRe
     (const void*)(unsigned long)&_replacee \
   };
 
-DYLD_INTERPOSE(hooked_CFBundleGetResourceURL, CFBundleGetResourceURL)
+DYLD_INTERPOSE(hooked_CFBundleCopyResourceURL, CFBundleCopyResourceURL)
 DYLD_INTERPOSE(hooked_CFBundleGetDataPointerForName, CFBundleGetDataPointerForName)
