@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <errno.h>
 
 // clang -Wall -O2 export_runtime_analysis.c -o export_runtime_analysis -pthread
 
@@ -171,35 +172,68 @@ int exportAssetsToCSV(const char* outputPath) {
     return 0;
 }
 
+int cleanSharedMemory() {
+    printf("Cleaning shared memory '%s'...\n", SHARED_MEMORY_NAME);
+
+    if (shm_unlink(SHARED_MEMORY_NAME) == 0) {
+        printf("Successfully removed shared memory\n");
+        return 0;
+    } else {
+        if (errno == ENOENT) {
+            printf("Shared memory does not exist (already clean)\n");
+            return 0;
+        } else {
+            fprintf(stderr, "Error: Failed to remove shared memory: %s\n", strerror(errno));
+            return 1;
+        }
+    }
+}
+
 void printUsage(const char* programName) {
-    printf("Usage: %s [classes|assets] <output_path>\n", programName);
+    printf("Usage: %s [classes|assets|clean] <output_path>\n", programName);
+    printf("\n");
+    printf("Commands:\n");
+    printf("  classes      Export class lifecycle statistics to CSV\n");
+    printf("  assets       Export asset access statistics to CSV\n");
+    printf("  clean        Remove shared memory (cleanup)\n");
     printf("\n");
     printf("Arguments:\n");
-    printf("  classes      Export class lifecycle statistics\n");
-    printf("  assets       Export asset access statistics\n");
-    printf("  output_path  Path to the output CSV file\n");
+    printf("  output_path  Path to the output CSV file (not required for clean)\n");
     printf("\n");
     printf("Examples:\n");
     printf("  %s classes classes_stats.csv\n", programName);
     printf("  %s assets assets_stats.csv\n", programName);
+    printf("  %s clean\n", programName);
 }
 
 int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        printUsage(argv[0]);
+        return 1;
+    }
+
+    const char* command = argv[1];
+
+    // Handle clean command (doesn't need output path)
+    if (strcmp(command, "clean") == 0) {
+        return cleanSharedMemory();
+    }
+
+    // For other commands, require output path
     if (argc < 3) {
         printUsage(argv[0]);
         return 1;
     }
 
-    const char* exportType = argv[1];
     const char* outputPath = argv[2];
 
-    if (strcmp(exportType, "classes") == 0) {
+    if (strcmp(command, "classes") == 0) {
         return exportClassesToCSV(outputPath);
-    } else if (strcmp(exportType, "assets") == 0) {
+    } else if (strcmp(command, "assets") == 0) {
         return exportAssetsToCSV(outputPath);
     } else {
-        fprintf(stderr, "Error: Invalid export type '%s'\n", exportType);
-        fprintf(stderr, "Must be either 'classes' or 'assets'\n");
+        fprintf(stderr, "Error: Invalid command '%s'\n", command);
+        fprintf(stderr, "Must be either 'classes', 'assets', or 'clean'\n");
         printUsage(argv[0]);
         return 1;
     }

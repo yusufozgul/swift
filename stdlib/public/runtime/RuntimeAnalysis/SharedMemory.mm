@@ -9,6 +9,9 @@
 #include <errno.h>
 #include <unordered_map>
 
+// For stat structure used in size check
+#include <sys/types.h>
+
 using namespace swift;
 
 constexpr size_t SHARED_MEMORY_SIZE = sizeof(pthread_mutex_t) + sizeof(uint32_t) + sizeof(uint32_t) +
@@ -38,6 +41,32 @@ void swift::initializeSharedMemory() {
       fprintf(stderr, "[YSWIFT] Failed to set shared memory size: %s\n", strerror(errno));
       close(fd);
       return;
+    }
+  } else {
+    // Check if existing shared memory has the correct size
+    struct stat sb;
+    if (fstat(fd, &sb) == 0) {
+      if ((size_t)sb.st_size != SHARED_MEMORY_SIZE) {
+        fprintf(stderr, "[YSWIFT] Existing shared memory has wrong size (%lld vs %zu), recreating\n",
+                sb.st_size, SHARED_MEMORY_SIZE);
+        close(fd);
+        shm_unlink(SHARED_MEMORY_NAME);
+
+        // Recreate with correct size
+        fd = shm_open(SHARED_MEMORY_NAME, O_CREAT | O_RDWR, 0666);
+        isNew = true;
+
+        if (fd < 0) {
+          fprintf(stderr, "[YSWIFT] Failed to recreate shared memory: %s\n", strerror(errno));
+          return;
+        }
+
+        if (ftruncate(fd, SHARED_MEMORY_SIZE) < 0) {
+          fprintf(stderr, "[YSWIFT] Failed to set shared memory size: %s\n", strerror(errno));
+          close(fd);
+          return;
+        }
+      }
     }
   }
 

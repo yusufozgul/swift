@@ -63,8 +63,8 @@ static void initializeTracking() {
 static void ensureTrackingInitialized() {
   static std::once_flag initFlag;
   std::call_once(initFlag, []() {
-    trackingInitialized.store(true, std::memory_order_release);
     initializeTracking();
+    trackingInitialized.store(true, std::memory_order_release);
   });
 }
 
