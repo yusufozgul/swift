@@ -1,5 +1,7 @@
 #include "ClassTracker.h"
 #include "ClassDiscover.h"
+#include "AssetTracker.h"
+#include "AssetDiscover.h"
 #include "SharedMemory.h"
 #include "swift/Runtime/Metadata.h"
 #include "swift/Runtime/HeapObject.h"
@@ -22,6 +24,12 @@ static void initializeTracking() {
   classIndexMap = new std::unordered_map<std::string, uint32_t>();
   classStatsMapMutex = new std::mutex();
   initializeSharedMemory();
+
+  // Run asset discovery if enabled (will exit after discovery)
+  discoverAllAssets();
+
+  // Initialize asset tracking for normal runs
+  forceAssetTrackingInitialization();
 
   // Load discovered classes and initialize tracking
   auto appClassNames = loadDiscoveredClasses();

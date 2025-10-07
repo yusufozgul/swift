@@ -11,8 +11,9 @@
 
 using namespace swift;
 
-constexpr size_t SHARED_MEMORY_SIZE = sizeof(pthread_mutex_t) + sizeof(uint32_t) +
-                                      (MAX_CLASSES * sizeof(SharedMemoryEntry));
+constexpr size_t SHARED_MEMORY_SIZE = sizeof(pthread_mutex_t) + sizeof(uint32_t) + sizeof(uint32_t) +
+                                      (MAX_CLASSES * sizeof(SharedMemoryEntry)) +
+                                      (MAX_ASSETS * sizeof(AssetMemoryEntry));
 
 static constexpr const char* SHARED_MEMORY_NAME = "/swift_class_lifecycle";
 
@@ -59,6 +60,7 @@ void swift::initializeSharedMemory() {
     pthread_mutex_init(&sharedMemory->mutex, &attr);
     pthread_mutexattr_destroy(&attr);
     sharedMemory->classCount = 0;
+    sharedMemory->assetCount = 0;
     fprintf(stderr, "[YSWIFT] Created new shared memory\n");
   } else {
     fprintf(stderr, "[YSWIFT] Attached to existing shared memory\n");
@@ -109,4 +111,46 @@ void swift::updateSharedMemoryStats(const std::string& className, uint32_t index
 
 SharedMemoryHeader* swift::getSharedMemory() {
   return sharedMemory;
+}
+
+void swift::parseSharedMemoryAssetStats(std::unordered_map<std::string, AssetStats>& stats) {
+  if (!sharedMemory) return;
+
+  pthread_mutex_lock(&sharedMemory->mutex);
+  for (uint32_t i = 0; i < sharedMemory->assetCount && i < MAX_ASSETS; i++) {
+    stats[sharedMemory->assetEntries[i].assetName] = sharedMemory->assetEntries[i].stats;
+  }
+  pthread_mutex_unlock(&sharedMemory->mutex);
+}
+
+uint32_t swift::syncAssetsToSharedMemory(const std::unordered_map<std::string, AssetStats>& assetStats,
+                                         std::unordered_map<std::string, uint32_t>& assetIndexMap) {
+  if (!sharedMemory) return 0;
+
+  pthread_mutex_lock(&sharedMemory->mutex);
+  uint32_t idx = 0;
+  for (const auto& entry : assetStats) {
+    if (idx >= MAX_ASSETS) break;
+
+    // Store asset info in shared memory
+    strncpy(sharedMemory->assetEntries[idx].assetName, entry.first.c_str(), MAX_ASSET_NAME_LENGTH - 1);
+    sharedMemory->assetEntries[idx].assetName[MAX_ASSET_NAME_LENGTH - 1] = '\0';
+    sharedMemory->assetEntries[idx].stats = entry.second;
+
+    assetIndexMap[entry.first] = idx;
+    idx++;
+  }
+  sharedMemory->assetCount = idx;
+  pthread_mutex_unlock(&sharedMemory->mutex);
+
+  fprintf(stderr, "[YSWIFT] Synced %u assets to shared memory with index mapping\n", idx);
+  return idx;
+}
+
+void swift::updateSharedMemoryAssetStats(const std::string& assetName, uint32_t index, const AssetStats& stats) {
+  if (!sharedMemory || index >= sharedMemory->assetCount) return;
+
+  pthread_mutex_lock(&sharedMemory->mutex);
+  sharedMemory->assetEntries[index].stats = stats;
+  pthread_mutex_unlock(&sharedMemory->mutex);
 }
