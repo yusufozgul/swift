@@ -148,13 +148,7 @@ static void discoverAssetsInBundle(CFBundleRef bundle, std::set<std::string> &as
   }
 }
 
-// Only used on iOS Simulator
-#if TARGET_OS_IOS && TARGET_OS_SIMULATOR
 void swift::discoverAllAssets() {
-#else
-void swift::discoverAllAssets() __attribute__((unused));
-void swift::discoverAllAssets() {
-#endif
   const char *discoverMode = getenv("RUNTIME_ASSET_DISCOVER");
   const char *assetListPath = getenv("RUNTIME_ASSET_DISCOVER_RESULT");
   bool shouldDiscover = discoverMode && strcmp(discoverMode, "true") == 0;
