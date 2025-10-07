@@ -27,6 +27,8 @@ set(swift_runtime_objc_sources
     RuntimeAnalysis/ClassDiscover.mm
     RuntimeAnalysis/SharedMemory.mm
     RuntimeAnalysis/ClassTracker.mm
+    RuntimeAnalysis/AssetDiscover.mm
+    RuntimeAnalysis/AssetTracker.mm
     ErrorObject.mm
     SwiftObject.mm
     SwiftValue.mm
