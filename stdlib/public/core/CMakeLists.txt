@@ -283,6 +283,11 @@ set(swift_core_framework_depends)
 set(swift_core_private_link_libraries)
 set(swift_stdlib_compile_flags "${SWIFT_RUNTIME_SWIFT_COMPILE_FLAGS}")
 
+# Add CoreFoundation framework for Darwin platforms (needed by AssetTracker)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  list(APPEND swift_core_framework_depends CoreFoundation)
+endif()
+
 if(SWIFT_PRIMARY_VARIANT_SDK STREQUAL "CYGWIN")
   # TODO(compnerd) cache this variable to permit re-configuration
   execute_process(COMMAND "cygpath" "-u" "$ENV{SYSTEMROOT}" OUTPUT_VARIABLE ENV_SYSTEMROOT)
