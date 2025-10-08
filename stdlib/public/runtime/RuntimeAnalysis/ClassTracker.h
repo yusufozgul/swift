@@ -7,6 +7,8 @@
 #ifndef SWIFT_RUNTIME_ANALYSIS_CLASS_TRACKER_H
 #define SWIFT_RUNTIME_ANALYSIS_CLASS_TRACKER_H
 
+#include "swift/ABI/Metadata.h"
+
 namespace swift {
 
 // Forward declarations
