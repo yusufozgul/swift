@@ -7,8 +7,7 @@
 #include "ClassTracker.h"
 #include "ClassDiscovery.h"
 #include "SharedMemory.h"
-#include "../Metadata.h"
-#include "../HeapObject.h"
+#include "swift/Runtime/HeapObject.h"
 #include <atomic>
 #include <cstring>
 #include <mutex>
