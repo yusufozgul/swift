@@ -10,8 +10,7 @@
 namespace swift {
 
 // Forward declarations
-class HeapMetadata;
-class HeapObject;
+struct HeapObject;
 
 namespace runtime_analysis {
 
