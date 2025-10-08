@@ -19,16 +19,9 @@ mkdir -p "$PACKAGE_DIR"
 mkdir -p "$WORK_DIR/symbols"
 cd "$SWIFT_SOURCE_DIR"
 
-TEMP_PRESET_FILE="$WORK_DIR/temp-single-arch-presets.ini"
-if ! sed '/^infer-cross-compile-hosts-on-darwin$/d' utils/build-presets.ini > "$TEMP_PRESET_FILE"; then
-    echo "❌ failed to create preset file!"
-    exit 1
-fi
-
 ./utils/build-script \
     --sccache \
-    --preset-file=$TEMP_PRESET_FILE \
-    --preset="buildbot_osx_package,no_test" \
+    --preset="buildbot_osx_package,no_test,ios_simulator_only" \
     install_destdir="$INSTALL_DIR" \
     install_prefix="swift-LOCAL-a.xctoolchain/usr" \
     install_symroot="$WORK_DIR/symbols" \
@@ -41,8 +34,6 @@ fi
     darwin_toolchain_xctoolchain_name="swift-LOCAL-a" \
     darwin_toolchain_version="6.1.2.custom" \
     darwin_toolchain_alias="Local"
-
-rm -f "$TEMP_PRESET_FILE" || true
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))

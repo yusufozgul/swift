@@ -24,16 +24,14 @@ if(SWIFT_RUNTIME_FIXED_BACKTRACER_PATH)
 endif()
 
 set(swift_runtime_objc_sources
-    RuntimeAnalysis/ClassDiscover.mm
-    RuntimeAnalysis/SharedMemory.mm
-    RuntimeAnalysis/ClassTracker.mm
-    RuntimeAnalysis/AssetDiscover.mm
-    RuntimeAnalysis/AssetTracker.mm
     ErrorObject.mm
     SwiftObject.mm
     SwiftValue.mm
     ReflectionMirrorObjC.mm
-    ObjCRuntimeGetImageNameFromClass.mm)
+    ObjCRuntimeGetImageNameFromClass.mm
+    RuntimeAnalysis/SharedMemory.mm
+    RuntimeAnalysis/ClassTracker.mm
+    RuntimeAnalysis/ClassDiscovery.mm)
 
 set(swift_runtime_sources
     ../CompatibilityOverride/CompatibilityOverride.cpp

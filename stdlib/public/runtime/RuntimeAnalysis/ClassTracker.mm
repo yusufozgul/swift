@@ -1,179 +1,112 @@
+//===--- ClassTracker.mm - Class Tracking Implementation ------------------===//
+//
+// Lock-free tracking using atomic operations and shared memory
+//
+//===----------------------------------------------------------------------===//
+
 #include "ClassTracker.h"
-#include "ClassDiscover.h"
-#include "AssetTracker.h"
-#include "AssetDiscover.h"
+#include "ClassDiscovery.h"
 #include "SharedMemory.h"
-#include "swift/Runtime/Metadata.h"
-#include "swift/Runtime/HeapObject.h"
+#include "../Metadata.h"
+#include "../HeapObject.h"
 #include <atomic>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <string>
 
-using namespace swift;
+namespace swift {
+namespace runtime_analysis {
 
-// =============================================================================
-// MUTEX ARCHITECTURE & LOCK ORDERING
-// =============================================================================
-//
-// This module uses ONE std::mutex for local stats (in-process synchronization).
-// It coordinates with SharedMemory's pthread_mutex (inter-process sync).
-//
-// CRITICAL RULES TO PREVENT DEADLOCK:
-// 1. Lock Level 1 (local classStatsMapMutex) FIRST
-// 2. Release Level 1 BEFORE calling SharedMemory functions
-// 3. SharedMemory functions acquire Level 2 (pthread_mutex) internally
-// 4. NEVER hold both locks simultaneously
-//
-// Lock Ordering:
-//   Level 1: classStatsMapMutex (local, std::mutex)
-//   Level 2: sharedMemory->mutex (shared, pthread_mutex)
-//
-// =============================================================================
+// Hash table entry
+struct ClassEntry {
+  std::atomic<uint64_t> init_count;
+  std::atomic<uint64_t> deinit_count;
+  char name[128];
+};
 
-namespace {
-std::unordered_map<std::string, ClassStats> *classStatsMap = nullptr;
-std::unordered_map<std::string, uint32_t> *classIndexMap = nullptr; // Maps class name to shared memory index
-std::mutex *classStatsMapMutex = nullptr;
-std::atomic<bool> trackingInitialized{false};
-} // namespace
+// Shared data structure
+struct TrackerData {
+  static constexpr size_t TABLE_SIZE = 16384;
+  ClassEntry entries[TABLE_SIZE];
+};
 
-static void initializeTracking() {
-  classStatsMap = new std::unordered_map<std::string, ClassStats>();
-  classIndexMap = new std::unordered_map<std::string, uint32_t>();
-  classStatsMapMutex = new std::mutex();
-  initializeSharedMemory();
+static std::atomic<TrackerData*> g_tracker{nullptr};
+static std::once_flag g_init_flag;
+static std::unordered_map<std::string, size_t> g_class_index_cache;
 
-  // Run discovery if enabled (will exit after discovery)
-  const char *classDiscoverMode = getenv("RUNTIME_DISCOVER");
-  const char *assetDiscoverMode = getenv("RUNTIME_ASSET_DISCOVER");
-  bool shouldDiscoverClasses = classDiscoverMode && strcmp(classDiscoverMode, "true") == 0;
-  bool shouldDiscoverAssets = assetDiscoverMode && strcmp(assetDiscoverMode, "true") == 0;
+// Helper: Extract class name from metadata
+static inline const char* get_class_name(const HeapMetadata* metadata) {
+  if (!metadata) return nullptr;
 
-  if (shouldDiscoverClasses) {
-    discoverAllClasses();
-  }
-  if (shouldDiscoverAssets) {
-    discoverAllAssets();
-  }
+  auto descriptor = metadata->getTypeContextDescriptor();
+  if (!descriptor) return nullptr;
 
-  if (shouldDiscoverClasses || shouldDiscoverAssets) {
-    fprintf(stderr, "[YSWIFT] All discovery completed, exiting application\n");
-    exit(0);
-  }
-
-  // Initialize asset tracking for normal runs
-  forceAssetTrackingInitialization();
-
-  // Load discovered classes and initialize tracking
-  auto appClassNames = loadDiscoveredClasses();
-
-  // Only populate classStatsMap if appClassNames is not empty
-  if (appClassNames.empty()) {
-    fprintf(stderr, "[YSWIFT] No classes to track, skipping initialization\n");
-    return;
-  }
-
-  std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-  classStatsMap->reserve(appClassNames.size());
-  classIndexMap->reserve(appClassNames.size());
-
-  // Load existing stats from shared memory first
-  std::unordered_map<std::string, ClassStats> existingStats;
-  parseSharedMemoryStats(existingStats);
-
-  // Initialize local map with existing stats or zeros
-  for (const auto& name : appClassNames) {
-    auto it = existingStats.find(name);
-    (*classStatsMap)[name] = (it != existingStats.end()) ? it->second : ClassStats{0, 0};
-  }
-
-  // Sync all classes to shared memory and build index map
-  syncClassesToSharedMemory(*classStatsMap, *classIndexMap);
-
-  fprintf(stderr, "[YSWIFT] Tracking initialized\n");
+  return descriptor->Name.get();
 }
 
-static void ensureTrackingInitialized() {
-  static std::once_flag initFlag;
-  std::call_once(initFlag, []() {
-    initializeTracking();
-    trackingInitialized.store(true, std::memory_order_release);
+// Helper: Get class name and find index in cache
+// Returns SIZE_MAX if not found
+static inline size_t get_class_index(const char* class_name) {
+  if (!class_name || !*class_name) return SIZE_MAX;
+
+  auto it = g_class_index_cache.find(class_name);
+  if (it == g_class_index_cache.end()) {
+    return SIZE_MAX; // Not in cache
+  }
+
+  return it->second;
+}
+
+void ClassTracker::build_index_cache(TrackerData* tracker) {
+  if (!tracker) return;
+
+  for (size_t i = 0; i < TrackerData::TABLE_SIZE; ++i) {
+    const char* name = tracker->entries[i].name;
+    g_class_index_cache[std::string(name)] = i;
+  }
+}
+
+void ClassTracker::initialize() {
+  std::call_once(g_init_flag, []() {
+    size_t size = sizeof(TrackerData);
+    void* mem = SharedMemory::get_or_create("/swift_class_tracker", size);
+    if (mem) {
+      auto* tracker = static_cast<TrackerData*>(mem);
+      
+      ClassDiscovery::discover_and_populate(tracker);
+      build_index_cache(tracker);
+
+      g_tracker.store(tracker, std::memory_order_release);
+    }
   });
 }
 
-void swift::logClassLifecycle(const HeapObject *object, const char *event) {
-  if (!object || !event) return;
-  if (!trackingInitialized.load(std::memory_order_acquire)) {
-    ensureTrackingInitialized();
+void ClassTracker::track_init(const HeapMetadata* metadata) {
+  auto tracker = g_tracker.load(std::memory_order_acquire);
+  if (!tracker) {
+    initialize();
+    tracker = g_tracker.load(std::memory_order_acquire);
+    if (!tracker) return;
   }
 
-  const HeapMetadata *metadata = object->metadata;
-  if (!metadata || metadata->getKind() != MetadataKind::Class) return;
-  if (!classStatsMap || !classIndexMap || !getSharedMemory()) return;
+  const char* name = get_class_name(metadata);
+  size_t idx = get_class_index(name);
+  if (idx == SIZE_MAX) return;
 
-  // Get the qualified (full module) name from metadata
-  std::string qualifiedName = nameForMetadata(metadata, true);
-  if (qualifiedName.empty()) return;
-
-  // Determine if this is init or deinit
-  const bool isInit = (event[0] == 'I');
-  const bool isDeinit = (event[0] == 'D');
-  if (!isInit && !isDeinit) return;
-
-  // CRITICAL: Separate local and shared memory updates to avoid nested locking
-  // Step 1: Update local stats (acquire Level 1 lock)
-  ClassStats updatedStats;
-  uint32_t classIndex;
-  bool shouldUpdate = false;
-
-  {
-    std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-
-    // Check if we're tracking this class
-    auto statsIt = classStatsMap->find(qualifiedName);
-    if (statsIt == classStatsMap->end()) return;
-
-    auto indexIt = classIndexMap->find(qualifiedName);
-    if (indexIt == classIndexMap->end()) return;
-
-    // Update local stats
-    if (isInit) {
-      statsIt->second.initCount++;
-    } else {
-      statsIt->second.deinitCount++;
-    }
-
-    // Copy values for shared memory update
-    updatedStats = statsIt->second;
-    classIndex = indexIt->second;
-    shouldUpdate = true;
-
-    // Level 1 lock released here
-  }
-
-  // Step 2: Update shared memory (will acquire Level 2 lock internally)
-  // NO LOCK HELD HERE - safe to call SharedMemory functions
-  if (shouldUpdate) {
-    updateSharedMemoryStats(qualifiedName, classIndex, updatedStats);
-  }
+  tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed);
 }
 
-bool swift::isTrackingInitialized() {
-  return trackingInitialized.load(std::memory_order_acquire);
+void ClassTracker::track_deinit(const HeapObject* object) {
+  auto tracker = g_tracker.load(std::memory_order_acquire);
+  if (!tracker) return;
+
+  const char* name = get_class_name(object->metadata);
+  size_t idx = get_class_index(name);
+  if (idx == SIZE_MAX) return;
+
+  tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed);
 }
 
-void swift::forceTrackingInitialization() {
-  ensureTrackingInitialized();
-}
-
-std::unordered_map<std::string, ClassStats> swift::getClassStats() {
-  if (!classStatsMap || !classStatsMapMutex) {
-    return std::unordered_map<std::string, ClassStats>();
-  }
-
-  std::lock_guard<std::mutex> lock(*classStatsMapMutex);
-  return *classStatsMap;
-}
+} // namespace runtime_analysis
+} // namespace swift

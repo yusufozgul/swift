@@ -29,6 +29,7 @@
 #include "swift/Runtime/InstrumentsSupport.h"
 #include "swift/shims/GlobalObjects.h"
 #include "swift/shims/RuntimeShims.h"
+#include "RuntimeAnalysis/ClassTracker.h"
 #include <algorithm>
 #include <cassert>
 #include <cstring>
@@ -47,7 +48,6 @@
 # include <malloc_type_private.h>
 #endif
 #include "Leaks.h"
-#include "RuntimeAnalysis/ClassTracker.h"
 
 using namespace swift;
 
@@ -288,10 +288,10 @@ static HeapObject *_swift_allocObject_(HeapMetadata const *metadata,
   // If leak tracking is enabled, start tracking this object.
   SWIFT_LEAKS_START_TRACKING_OBJECT(object);
 
+  // Track class initialization
+  runtime_analysis::ClassTracker::track_init(metadata);
+
   SWIFT_RT_TRACK_INVOCATION(object, swift_allocObject);
-
-  logClassLifecycle(object, "INIT");
-
   return object;
 }
 
@@ -828,7 +828,9 @@ void swift::swift_unownedCheck(HeapObject *object) {
 }
 
 void _swift_release_dealloc(HeapObject *object) {
-  logClassLifecycle(object, "DEINIT");
+  // Track class deinitialization
+  runtime_analysis::ClassTracker::track_deinit(object);
+
   asFullMetadata(object->metadata)->destroy(object);
 }
 
