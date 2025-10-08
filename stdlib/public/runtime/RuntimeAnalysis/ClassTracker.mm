@@ -9,6 +9,8 @@
 #include <mutex>
 #include <unordered_map>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 using namespace swift;
 
@@ -25,8 +27,23 @@ static void initializeTracking() {
   classStatsMapMutex = new std::mutex();
   initializeSharedMemory();
 
-  // Run asset discovery if enabled (will exit after discovery)
-  discoverAllAssets();
+  // Run discovery if enabled (will exit after discovery)
+  const char *classDiscoverMode = getenv("RUNTIME_DISCOVER");
+  const char *assetDiscoverMode = getenv("RUNTIME_ASSET_DISCOVER");
+  bool shouldDiscoverClasses = classDiscoverMode && strcmp(classDiscoverMode, "true") == 0;
+  bool shouldDiscoverAssets = assetDiscoverMode && strcmp(assetDiscoverMode, "true") == 0;
+
+  if (shouldDiscoverClasses) {
+    discoverAllClasses();
+  }
+  if (shouldDiscoverAssets) {
+    discoverAllAssets();
+  }
+
+  if (shouldDiscoverClasses || shouldDiscoverAssets) {
+    fprintf(stderr, "[YSWIFT] All discovery completed, exiting application\n");
+    exit(0);
+  }
 
   // Initialize asset tracking for normal runs
   forceAssetTrackingInitialization();

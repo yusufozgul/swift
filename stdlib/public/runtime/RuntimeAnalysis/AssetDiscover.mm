@@ -75,7 +75,11 @@ static bool isAppBundle(const char *imagePath) {
 }
 
 // Scan directory for image resources (png, jpg, pdf, etc.)
-static void scanDirectoryForAssets(const char *dirPath, const std::string &bundleID, std::set<std::string> &assets) {
+static void scanDirectoryForAssets(const char *dirPath, const std::string &bundleID, std::set<std::string> &assets, int depth = 0) {
+  // Prevent infinite recursion
+  constexpr int MAX_DEPTH = 20;
+  if (depth > MAX_DEPTH) return;
+
   DIR *dir = opendir(dirPath);
   if (!dir) return;
 
@@ -87,11 +91,14 @@ static void scanDirectoryForAssets(const char *dirPath, const std::string &bundl
     snprintf(fullPath, sizeof(fullPath), "%s/%s", dirPath, entry->d_name);
 
     struct stat statbuf;
-    if (stat(fullPath, &statbuf) != 0) continue;
+    if (lstat(fullPath, &statbuf) != 0) continue;
+
+    // Skip symbolic links to prevent circular references
+    if (S_ISLNK(statbuf.st_mode)) continue;
 
     if (S_ISDIR(statbuf.st_mode)) {
       // Recursively scan subdirectories
-      scanDirectoryForAssets(fullPath, bundleID, assets);
+      scanDirectoryForAssets(fullPath, bundleID, assets, depth + 1);
     } else {
       // Check for image file extensions
       const char *ext = strrchr(entry->d_name, '.');
@@ -149,11 +156,11 @@ static void discoverAssetsInBundle(CFBundleRef bundle, std::set<std::string> &as
 }
 
 void swift::discoverAllAssets() {
-  const char *discoverMode = getenv("RUNTIME_ASSET_DISCOVER");
   const char *assetListPath = getenv("RUNTIME_ASSET_DISCOVER_RESULT");
-  bool shouldDiscover = discoverMode && strcmp(discoverMode, "true") == 0;
-
-  if (!assetListPath || !shouldDiscover) return;
+  if (!assetListPath) {
+    fprintf(stderr, "[YSWIFT] RUNTIME_ASSET_DISCOVER_RESULT not set, skipping asset discovery\n");
+    return;
+  }
 
   std::set<std::string> allAssets;
 
@@ -196,8 +203,6 @@ void swift::discoverAllAssets() {
   }
 
   fprintf(stderr, "[YSWIFT] Discovered %zu assets written to: %s\n", allAssets.size(), assetListPath);
-  fprintf(stderr, "[YSWIFT] Asset discovery completed, exiting application\n");
-  exit(0);
 }
 
 std::vector<std::string> swift::loadDiscoveredAssets() {
@@ -220,7 +225,8 @@ std::vector<std::string> swift::loadDiscoveredAssets() {
  * Environment Variables:
  *
  * RUNTIME_ASSET_DISCOVER
- *   - Set to "true" to enable asset discovery mode (scans all bundles, writes to file, then exits)
+ *   - Set to "true" to enable asset discovery mode (scans all bundles and writes to file)
+ *   - Discovery mode will exit the application after completion (handled in ClassTracker.mm)
  *
  * RUNTIME_ASSET_DISCOVER_RESULT
  *   - File path for reading/writing the list of assets to track

@@ -14,60 +14,53 @@
 
 using namespace swift;
 
-constexpr size_t SHARED_MEMORY_SIZE = sizeof(pthread_mutex_t) + sizeof(uint32_t) + sizeof(uint32_t) +
-                                      (MAX_CLASSES * sizeof(SharedMemoryEntry)) +
-                                      (MAX_ASSETS * sizeof(AssetMemoryEntry));
+constexpr size_t SHARED_MEMORY_SIZE = sizeof(SharedMemoryHeader);
 
 static constexpr const char* SHARED_MEMORY_NAME = "/swift_class_lifecycle";
 
 static SharedMemoryHeader* sharedMemory = nullptr;
 
 void swift::initializeSharedMemory() {
-  // Try to open existing shared memory first
-  int fd = shm_open(SHARED_MEMORY_NAME, O_RDWR, 0666);
-  bool isNew = false;
+  // Try to create new shared memory with O_EXCL to detect if it already exists
+  int fd = shm_open(SHARED_MEMORY_NAME, O_CREAT | O_EXCL | O_RDWR, 0666);
+  bool isNew = (fd >= 0);
 
-  if (fd < 0) {
-    // Create new shared memory if it doesn't exist
-    fd = shm_open(SHARED_MEMORY_NAME, O_CREAT | O_RDWR, 0666);
-    isNew = true;
+  if (fd < 0 && errno == EEXIST) {
+    // Shared memory already exists, try to open it
+    fd = shm_open(SHARED_MEMORY_NAME, O_RDWR, 0666);
 
-    if (fd < 0) {
-      fprintf(stderr, "[YSWIFT] Failed to create shared memory: %s\n", strerror(errno));
-      return;
-    }
-
-    if (ftruncate(fd, SHARED_MEMORY_SIZE) < 0) {
-      fprintf(stderr, "[YSWIFT] Failed to set shared memory size: %s\n", strerror(errno));
-      close(fd);
-      return;
-    }
-  } else {
-    // Check if existing shared memory has the correct size
-    struct stat sb;
-    if (fstat(fd, &sb) == 0) {
-      if ((size_t)sb.st_size != SHARED_MEMORY_SIZE) {
-        fprintf(stderr, "[YSWIFT] Existing shared memory has wrong size (%lld vs %zu), recreating\n",
+    if (fd >= 0) {
+      // Check if existing shared memory has the correct size
+      struct stat sb;
+      if (fstat(fd, &sb) == 0 && (size_t)sb.st_size != SHARED_MEMORY_SIZE) {
+        fprintf(stderr, "[YSWIFT] Existing shared memory has wrong size (%lld vs %zu), using unlink/recreate\n",
                 sb.st_size, SHARED_MEMORY_SIZE);
         close(fd);
+
+        // Try to recreate - this is safe because only the first process will succeed with O_EXCL
         shm_unlink(SHARED_MEMORY_NAME);
+        fd = shm_open(SHARED_MEMORY_NAME, O_CREAT | O_EXCL | O_RDWR, 0666);
+        isNew = (fd >= 0);
 
-        // Recreate with correct size
-        fd = shm_open(SHARED_MEMORY_NAME, O_CREAT | O_RDWR, 0666);
-        isNew = true;
-
-        if (fd < 0) {
-          fprintf(stderr, "[YSWIFT] Failed to recreate shared memory: %s\n", strerror(errno));
-          return;
-        }
-
-        if (ftruncate(fd, SHARED_MEMORY_SIZE) < 0) {
-          fprintf(stderr, "[YSWIFT] Failed to set shared memory size: %s\n", strerror(errno));
-          close(fd);
-          return;
+        if (fd < 0 && errno == EEXIST) {
+          // Another process already recreated it, just open it
+          fd = shm_open(SHARED_MEMORY_NAME, O_RDWR, 0666);
+          isNew = false;
         }
       }
     }
+  }
+
+  if (fd < 0) {
+    fprintf(stderr, "[YSWIFT] Failed to open/create shared memory: %s\n", strerror(errno));
+    return;
+  }
+
+  // Set size if this is new
+  if (isNew && ftruncate(fd, SHARED_MEMORY_SIZE) < 0) {
+    fprintf(stderr, "[YSWIFT] Failed to set shared memory size: %s\n", strerror(errno));
+    close(fd);
+    return;
   }
 
   // Map shared memory

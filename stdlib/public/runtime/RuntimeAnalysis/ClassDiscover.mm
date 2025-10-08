@@ -45,31 +45,28 @@ void swift::discoverAllClasses() {
 void swift::discoverAllClasses() __attribute__((unused));
 void swift::discoverAllClasses() {
 #endif
-  const char *discoverMode = getenv("RUNTIME_DISCOVER");
   const char *classListPath = getenv("RUNTIME_DISCOVER_RESULT");
-  bool shouldDiscover = discoverMode && strcmp(discoverMode, "true") == 0;
+  if (!classListPath) {
+    fprintf(stderr, "[YSWIFT] RUNTIME_DISCOVER_RESULT not set, skipping class discovery\n");
+    return;
+  }
 
   std::vector<std::string> appClassNames;
+  unsigned int numClasses = 0;
+  Class *classes = objc_copyClassList(&numClasses);
 
-  if (classListPath && shouldDiscover) {
-    unsigned int numClasses = 0;
-    Class *classes = objc_copyClassList(&numClasses);
-
-    if (classes) {
-      for (unsigned int i = 0; i < numClasses; i++) {
-        if (isAppClass(classes[i])) {
-          const char *name = class_getName(classes[i]);
-          if (name) appClassNames.push_back(name);
-        }
+  if (classes) {
+    for (unsigned int i = 0; i < numClasses; i++) {
+      if (isAppClass(classes[i])) {
+        const char *name = class_getName(classes[i]);
+        if (name) appClassNames.push_back(name);
       }
-      free(classes);
-
-      std::ofstream file(classListPath);
-      for (const auto& name : appClassNames) file << name << '\n';
-      fprintf(stderr, "[YSWIFT] Discovered %zu classes written to: %s\n", appClassNames.size(), classListPath);
-      fprintf(stderr, "[YSWIFT] Discovery completed, exiting application\n");
-      exit(0);
     }
+    free(classes);
+
+    std::ofstream file(classListPath);
+    for (const auto& name : appClassNames) file << name << '\n';
+    fprintf(stderr, "[YSWIFT] Discovered %zu classes written to: %s\n", appClassNames.size(), classListPath);
   }
 }
 
@@ -93,7 +90,8 @@ std::vector<std::string> swift::loadDiscoveredClasses() {
  * Environment Variables:
  *
  * RUNTIME_DISCOVER
- *   - Set to "true" to enable class discovery mode (scans all classes, writes to file, then exits)
+ *   - Set to "true" to enable class discovery mode (scans all classes and writes to file)
+ *   - Discovery mode will exit the application after completion (handled in ClassTracker.mm)
  *
  * RUNTIME_DISCOVER_RESULT
  *   - File path for reading/writing the list of classes to track
