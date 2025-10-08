@@ -14,6 +14,25 @@
 
 using namespace swift;
 
+// =============================================================================
+// MUTEX ARCHITECTURE & LOCK ORDERING
+// =============================================================================
+//
+// This module uses ONE std::mutex for local stats (in-process synchronization).
+// It coordinates with SharedMemory's pthread_mutex (inter-process sync).
+//
+// CRITICAL RULES TO PREVENT DEADLOCK:
+// 1. Lock Level 1 (local classStatsMapMutex) FIRST
+// 2. Release Level 1 BEFORE calling SharedMemory functions
+// 3. SharedMemory functions acquire Level 2 (pthread_mutex) internally
+// 4. NEVER hold both locks simultaneously
+//
+// Lock Ordering:
+//   Level 1: classStatsMapMutex (local, std::mutex)
+//   Level 2: sharedMemory->mutex (shared, pthread_mutex)
+//
+// =============================================================================
+
 namespace {
 std::unordered_map<std::string, ClassStats> *classStatsMap = nullptr;
 std::unordered_map<std::string, uint32_t> *classIndexMap = nullptr; // Maps class name to shared memory index
@@ -104,25 +123,42 @@ void swift::logClassLifecycle(const HeapObject *object, const char *event) {
   const bool isDeinit = (event[0] == 'D');
   if (!isInit && !isDeinit) return;
 
-  std::lock_guard<std::mutex> lock(*classStatsMapMutex);
+  // CRITICAL: Separate local and shared memory updates to avoid nested locking
+  // Step 1: Update local stats (acquire Level 1 lock)
+  ClassStats updatedStats;
+  uint32_t classIndex;
+  bool shouldUpdate = false;
 
-  // Check if we're tracking this class
-  auto statsIt = classStatsMap->find(qualifiedName);
-  if (statsIt == classStatsMap->end()) return;
+  {
+    std::lock_guard<std::mutex> lock(*classStatsMapMutex);
 
-  auto indexIt = classIndexMap->find(qualifiedName);
-  if (indexIt == classIndexMap->end()) return;
+    // Check if we're tracking this class
+    auto statsIt = classStatsMap->find(qualifiedName);
+    if (statsIt == classStatsMap->end()) return;
 
-  // Update local stats
-  if (isInit) {
-    statsIt->second.initCount++;
-  } else {
-    statsIt->second.deinitCount++;
+    auto indexIt = classIndexMap->find(qualifiedName);
+    if (indexIt == classIndexMap->end()) return;
+
+    // Update local stats
+    if (isInit) {
+      statsIt->second.initCount++;
+    } else {
+      statsIt->second.deinitCount++;
+    }
+
+    // Copy values for shared memory update
+    updatedStats = statsIt->second;
+    classIndex = indexIt->second;
+    shouldUpdate = true;
+
+    // Level 1 lock released here
   }
 
-  // Update shared memory
-  uint32_t index = indexIt->second;
-  updateSharedMemoryStats(qualifiedName, index, statsIt->second);
+  // Step 2: Update shared memory (will acquire Level 2 lock internally)
+  // NO LOCK HELD HERE - safe to call SharedMemory functions
+  if (shouldUpdate) {
+    updateSharedMemoryStats(qualifiedName, classIndex, updatedStats);
+  }
 }
 
 bool swift::isTrackingInitialized() {

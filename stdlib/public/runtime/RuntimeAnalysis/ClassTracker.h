@@ -5,6 +5,30 @@
 #include "swift/Runtime/HeapObject.h"
 #include <unordered_map>
 
+// =============================================================================
+// CLASS LIFECYCLE TRACKING - THREAD SAFETY
+// =============================================================================
+//
+// This module tracks class initialization and deinitialization events.
+// All public functions are THREAD-SAFE.
+//
+// MUTEX ARCHITECTURE:
+// - Uses internal std::mutex (classStatsMapMutex) for local stats
+// - Coordinates with SharedMemory's pthread_mutex for inter-process sync
+// - STRICT lock ordering prevents deadlock
+//
+// LOCK ORDERING:
+//   Level 1: classStatsMapMutex (acquired FIRST, released FIRST)
+//   Level 2: sharedMemory->mutex (acquired AFTER Level 1 is released)
+//
+// IMPLEMENTATION DETAILS:
+// - logClassLifecycle updates local stats under Level 1 lock
+// - Then releases Level 1 lock completely
+// - Then calls SharedMemory functions (which acquire Level 2 lock)
+// - This ensures NO nested locking ever occurs
+//
+// =============================================================================
+
 namespace swift {
 
 /// Log class lifecycle events (initialization and deinitialization)

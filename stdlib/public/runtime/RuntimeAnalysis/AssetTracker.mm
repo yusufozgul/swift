@@ -11,6 +11,25 @@
 
 using namespace swift;
 
+// =============================================================================
+// MUTEX ARCHITECTURE & LOCK ORDERING
+// =============================================================================
+//
+// This module uses ONE std::mutex for local asset stats (in-process sync).
+// It coordinates with SharedMemory's pthread_mutex (inter-process sync).
+//
+// CRITICAL RULES TO PREVENT DEADLOCK:
+// 1. Lock Level 1 (local assetStatsMapMutex) FIRST
+// 2. Release Level 1 BEFORE calling SharedMemory functions
+// 3. SharedMemory functions acquire Level 2 (pthread_mutex) internally
+// 4. NEVER hold both locks simultaneously
+//
+// Lock Ordering:
+//   Level 1: assetStatsMapMutex (local, std::mutex)
+//   Level 2: sharedMemory->mutex (shared, pthread_mutex)
+//
+// =============================================================================
+
 namespace {
 std::unordered_map<std::string, AssetStats> *assetStatsMap = nullptr;
 std::unordered_map<std::string, uint32_t> *assetIndexMap = nullptr;
@@ -91,21 +110,38 @@ void swift::logAssetAccess(const char* bundleID, const char* resourceName) {
   char fullAssetName[MAX_ASSET_NAME_LENGTH];
   snprintf(fullAssetName, sizeof(fullAssetName), "%s:%s", bundleID, resourceName);
 
-  std::lock_guard<std::mutex> lock(*assetStatsMapMutex);
+  // CRITICAL: Separate local and shared memory updates to avoid nested locking
+  // Step 1: Update local stats (acquire Level 1 lock)
+  AssetStats updatedStats;
+  uint32_t assetIndex;
+  bool shouldUpdate = false;
 
-  // Check if we're tracking this asset
-  auto statsIt = assetStatsMap->find(fullAssetName);
-  if (statsIt == assetStatsMap->end()) return;
+  {
+    std::lock_guard<std::mutex> lock(*assetStatsMapMutex);
 
-  auto indexIt = assetIndexMap->find(fullAssetName);
-  if (indexIt == assetIndexMap->end()) return;
+    // Check if we're tracking this asset
+    auto statsIt = assetStatsMap->find(fullAssetName);
+    if (statsIt == assetStatsMap->end()) return;
 
-  // Update local stats
-  statsIt->second.accessCount++;
+    auto indexIt = assetIndexMap->find(fullAssetName);
+    if (indexIt == assetIndexMap->end()) return;
 
-  // Update shared memory
-  uint32_t index = indexIt->second;
-  updateSharedMemoryAssetStats(fullAssetName, index, statsIt->second);
+    // Update local stats
+    statsIt->second.accessCount++;
+
+    // Copy values for shared memory update
+    updatedStats = statsIt->second;
+    assetIndex = indexIt->second;
+    shouldUpdate = true;
+
+    // Level 1 lock released here
+  }
+
+  // Step 2: Update shared memory (will acquire Level 2 lock internally)
+  // NO LOCK HELD HERE - safe to call SharedMemory functions
+  if (shouldUpdate) {
+    updateSharedMemoryAssetStats(fullAssetName, assetIndex, updatedStats);
+  }
 }
 
 // ============================================================================
@@ -123,26 +159,26 @@ static CFBundleCopyResourceURLFunc original_CFBundleCopyResourceURL = nullptr;
 static CFBundleGetDataPointerForNameFunc original_CFBundleGetDataPointerForName = nullptr;
 
 // Helper: Get bundle identifier from CFBundleRef
-static const char* getBundleIDFromBundle(CFBundleRef bundle) {
-  if (!bundle) return nullptr;
+// NOTE: Returns pointer to STACK buffer, caller must use immediately
+static const char* getBundleIDFromBundle(CFBundleRef bundle, char* outBuffer, size_t bufferSize) {
+  if (!bundle || !outBuffer || bufferSize == 0) return nullptr;
 
-  static __thread char bundleIDBuffer[256];
   CFStringRef identifier = CFBundleGetIdentifier(bundle);
 
-  if (identifier && CFStringGetCString(identifier, bundleIDBuffer, sizeof(bundleIDBuffer), kCFStringEncodingUTF8)) {
-    return bundleIDBuffer;
+  if (identifier && CFStringGetCString(identifier, outBuffer, bufferSize, kCFStringEncodingUTF8)) {
+    return outBuffer;
   }
 
   return nullptr;
 }
 
 // Helper: Get resource name from CFStringRef
-static const char* getResourceNameFromCFString(CFStringRef resourceName) {
-  if (!resourceName) return nullptr;
+// NOTE: Returns pointer to STACK buffer, caller must use immediately
+static const char* getResourceNameFromCFString(CFStringRef resourceName, char* outBuffer, size_t bufferSize) {
+  if (!resourceName || !outBuffer || bufferSize == 0) return nullptr;
 
-  static __thread char resourceBuffer[256];
-  if (CFStringGetCString(resourceName, resourceBuffer, sizeof(resourceBuffer), kCFStringEncodingUTF8)) {
-    return resourceBuffer;
+  if (CFStringGetCString(resourceName, outBuffer, bufferSize, kCFStringEncodingUTF8)) {
+    return outBuffer;
   }
 
   return nullptr;
@@ -156,9 +192,12 @@ static CFURLRef hooked_CFBundleCopyResourceURL(CFBundleRef bundle, CFStringRef r
     original_CFBundleCopyResourceURL = (CFBundleCopyResourceURLFunc)dlsym(RTLD_NEXT, "CFBundleCopyResourceURL");
   }
 
-  // Log the asset access
-  const char* bundleID = getBundleIDFromBundle(bundle);
-  const char* resName = getResourceNameFromCFString(resourceName);
+  // Log the asset access using STACK buffers (thread-safe, no memory leaks)
+  char bundleIDBuffer[256];
+  char resourceNameBuffer[256];
+
+  const char* bundleID = getBundleIDFromBundle(bundle, bundleIDBuffer, sizeof(bundleIDBuffer));
+  const char* resName = getResourceNameFromCFString(resourceName, resourceNameBuffer, sizeof(resourceNameBuffer));
 
   if (bundleID && resName) {
     logAssetAccess(bundleID, resName);
@@ -179,9 +218,12 @@ static void* hooked_CFBundleGetDataPointerForName(CFBundleRef bundle, CFStringRe
     original_CFBundleGetDataPointerForName = (CFBundleGetDataPointerForNameFunc)dlsym(RTLD_NEXT, "CFBundleGetDataPointerForName");
   }
 
-  // Log the asset access (for data assets)
-  const char* bundleID = getBundleIDFromBundle(bundle);
-  const char* symName = getResourceNameFromCFString(symbolName);
+  // Log the asset access using STACK buffers (thread-safe, no memory leaks)
+  char bundleIDBuffer[256];
+  char symbolNameBuffer[256];
+
+  const char* bundleID = getBundleIDFromBundle(bundle, bundleIDBuffer, sizeof(bundleIDBuffer));
+  const char* symName = getResourceNameFromCFString(symbolName, symbolNameBuffer, sizeof(symbolNameBuffer));
 
   if (bundleID && symName) {
     logAssetAccess(bundleID, symName);

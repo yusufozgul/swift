@@ -6,6 +6,34 @@
 #include <unordered_map>
 #include <pthread.h>
 
+// =============================================================================
+// SHARED MEMORY ARCHITECTURE & THREAD SAFETY
+// =============================================================================
+//
+// This module provides inter-process shared memory for tracking runtime stats.
+// All public functions in this module are THREAD-SAFE and PROCESS-SAFE.
+//
+// MUTEX ARCHITECTURE:
+// - Uses a single pthread_mutex stored IN shared memory (process-shared)
+// - All public functions acquire/release this mutex internally
+// - Lock duration is MINIMAL (only critical sections)
+//
+// LOCK ORDERING (to prevent deadlock):
+//   Level 1: ClassTracker/AssetTracker local std::mutex (in-process)
+//   Level 2: SharedMemory pthread_mutex (inter-process)
+//
+// CRITICAL RULE FOR CALLERS:
+// - NEVER call these functions while holding Level 1 locks
+// - Release all local locks BEFORE calling SharedMemory functions
+// - This prevents nested locking and deadlock
+//
+// RACE CONDITION PREVENTION:
+// - Bounds checks are performed INSIDE mutex (not outside)
+// - This prevents TOCTOU (Time-Of-Check-Time-Of-Use) bugs
+// - Shared memory recreation is disabled to avoid multi-process races
+//
+// =============================================================================
+
 namespace swift {
 
 // Shared memory structure for inter-process communication
