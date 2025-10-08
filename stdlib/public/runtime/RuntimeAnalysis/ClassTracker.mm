@@ -33,7 +33,7 @@ struct TrackerData {
 
 static std::atomic<TrackerData*> g_tracker{nullptr};
 static std::once_flag g_init_flag;
-static std::unordered_map<std::string, size_t> g_class_index_cache;
+static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
 
 // Helper: Extract class name from metadata
 static inline const char* get_class_name(const HeapMetadata* metadata) {
@@ -48,10 +48,10 @@ static inline const char* get_class_name(const HeapMetadata* metadata) {
 // Helper: Get class name and find index in cache
 // Returns SIZE_MAX if not found
 static inline size_t get_class_index(const char* class_name) {
-  if (!class_name || !*class_name) return SIZE_MAX;
+  if (!class_name || !*class_name || !g_class_index_cache) return SIZE_MAX;
 
-  auto it = g_class_index_cache.find(class_name);
-  if (it == g_class_index_cache.end()) {
+  auto it = g_class_index_cache->find(class_name);
+  if (it == g_class_index_cache->end()) {
     fprintf(stderr, "[YSWIFT] get_class_index: class '%s' not found in cache\n", class_name);
     return SIZE_MAX; // Not in cache
   }
@@ -63,9 +63,15 @@ static inline size_t get_class_index(const char* class_name) {
 void ClassTracker::build_index_cache(TrackerData* tracker) {
   if (!tracker) return;
 
+  if (!g_class_index_cache) {
+    g_class_index_cache = new std::unordered_map<std::string, size_t>();
+  }
+
+  size_t count = 0;
   for (size_t i = 0; i < TrackerData::TABLE_SIZE; ++i) {
     const char* name = tracker->entries[i].name;
-    g_class_index_cache[std::string(name)] = i;
+    (*g_class_index_cache)[std::string(name)] = i;
+    count++;
   }
   fprintf(stderr, "[YSWIFT] build_index_cache: completed, cached %zu classes\n", count);
 }
