@@ -21,11 +21,8 @@ public:
   static bool discover_and_populate(TrackerData* tracker);
 
 private:
-  // Check if class belongs to app (not system/framework)
-  static bool is_app_class(const char* image_name);
-
-  // Get bundle path for main executable
-  static const char* get_bundle_path();
+  // Get main executable path
+  static const char* get_executable_path();
 };
 
 } // namespace runtime_analysis
