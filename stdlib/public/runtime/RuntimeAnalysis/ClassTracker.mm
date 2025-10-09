@@ -10,10 +10,10 @@
 #include "swift/Runtime/HeapObject.h"
 #include <atomic>
 #include <cstring>
-#include <mutex>
 #include <unordered_map>
 #include <string>
 #include <cstdio>
+#include <pthread.h>
 #include <dispatch/dispatch.h>
 #include <objc/runtime.h>
 
@@ -23,7 +23,7 @@ namespace runtime_analysis {
 static std::atomic<TrackerData*> g_tracker{nullptr};
 static std::once_flag g_init_flag;
 static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
-static std::mutex g_cache_mutex;
+static pthread_mutex_t g_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Helper: Extract class name from metadata
 static inline const char* get_class_name(const HeapMetadata* metadata) {
@@ -45,20 +45,24 @@ static inline size_t get_class_index(const char* class_name) {
     return SIZE_MAX;
   }
 
-  std::lock_guard<std::mutex> lock(g_cache_mutex);
+  pthread_mutex_lock(&g_cache_mutex);
 
   if (!g_class_index_cache) {
     fprintf(stderr, "[YSWIFT] get_class_index: cache not initialized\n");
+    pthread_mutex_unlock(&g_cache_mutex);
     return SIZE_MAX;
   }
 
   auto it = g_class_index_cache->find(class_name);
   if (it == g_class_index_cache->end()) {
+    pthread_mutex_unlock(&g_cache_mutex);
     return SIZE_MAX;
   }
 
   fprintf(stderr, "[YSWIFT] get_class_index: class '%s' found at index %zu\n", class_name, it->second);
-  return it->second;
+  size_t result = it->second;
+  pthread_mutex_unlock(&g_cache_mutex);
+  return result;
 }
 
 void ClassTracker::build_index_cache(TrackerData* tracker) {
@@ -69,7 +73,7 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
     return;
   }
 
-  std::lock_guard<std::mutex> lock(g_cache_mutex);
+  pthread_mutex_lock(&g_cache_mutex);
 
   if (!g_class_index_cache) {
     g_class_index_cache = new std::unordered_map<std::string, size_t>();
@@ -88,6 +92,8 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
     }
   }
   fprintf(stderr, "[YSWIFT] build_index_cache: completed, cached %zu classes\n", count);
+
+  pthread_mutex_unlock(&g_cache_mutex);
 }
 
 void ClassTracker::initialize() {
