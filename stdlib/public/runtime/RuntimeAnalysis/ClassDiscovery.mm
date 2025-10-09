@@ -65,8 +65,10 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
   }
 
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: querying all classes using objc_copyClassList\n");
-  unsigned int class_count = 0;
-  Class *all_classes = objc_copyClassList(&class_count);
+
+  @try {
+    unsigned int class_count = 0;
+    Class *all_classes = objc_copyClassList(&class_count);
 
   if (!all_classes) {
     fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: ERROR - objc_copyClassList returned null\n");
@@ -76,13 +78,18 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: found %u total classes\n", class_count);
 
   size_t entry_index = 0;
+
   for (unsigned int i = 0; i < class_count && entry_index < TrackerData::TABLE_SIZE; i++) {
-    const char* class_name = class_getName(all_classes[i]);
-    if (!class_name) continue;
+    Class cls = all_classes[i];
+    if (!cls) continue;
+
+    const char* class_name = class_getName(cls);
+    if (!class_name || class_name[0] == '\0') continue;
 
     // Filter to only include classes from the main executable
-    const char* image_name = class_getImageName(all_classes[i]);
-    if (image_name && strstr(image_name, exec_path)) {
+    const char* image_name = class_getImageName(cls);
+
+    if (image_name && strcmp(image_name, exec_path) == 0) {
       auto& entry = tracker->entries[entry_index];
       snprintf(entry.name, sizeof(entry.name), "%s", class_name);
       entry.init_count.store(0, std::memory_order_relaxed);
@@ -90,7 +97,8 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
       entry_index++;
 
       if (entry_index <= 10) {
-        fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: added class '%s'\n", class_name);
+        fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: added class '%s' at index %zu\n",
+                class_name, entry_index - 1);
       }
     }
   }
@@ -99,6 +107,12 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
 
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: completed - added %zu classes from main executable\n", entry_index);
   return entry_index > 0;
+
+  } @catch (NSException *exception) {
+    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: EXCEPTION caught - %s\n",
+            [[exception description] UTF8String]);
+    return false;
+  }
 }
 
 } // namespace runtime_analysis
