@@ -38,6 +38,11 @@ static std::once_flag g_init_flag;
 static std::atomic<bool> g_init_started{false};
 static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
 
+static inline bool is_tracking_enabled() {
+  static const char* env = getenv("SWIFT_CLASS_TRACKING");
+  return env && env[0] == '1';
+}
+
 // Helper: Extract class name from metadata
 static inline const char* get_class_name(const HeapMetadata* metadata) {
   if (!metadata) return nullptr;
@@ -96,6 +101,8 @@ void ClassTracker::initialize() {
 }
 
 void ClassTracker::track_init(const HeapMetadata* metadata) {
+  if (!is_tracking_enabled()) return;
+
   // Fast path: check if tracker is ready
   auto tracker = g_tracker.load(std::memory_order_acquire);
   if (!tracker) {
@@ -119,6 +126,8 @@ void ClassTracker::track_init(const HeapMetadata* metadata) {
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
+  if (!is_tracking_enabled()) return;
+
   // Fast path: check if tracker is ready
   auto tracker = g_tracker.load(std::memory_order_acquire);
   if (!tracker) {
