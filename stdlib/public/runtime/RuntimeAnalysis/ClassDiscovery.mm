@@ -67,15 +67,17 @@ void ClassDiscovery::load_existing_data_sync(TrackerData* tracker) {
 }
 
 void ClassDiscovery::discover_and_populate_async(TrackerData* tracker) {
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate_async: scheduling async discovery\n");
+  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate_async: scheduling async discovery with 15 second delay\n");
 
   if (!tracker) {
     fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate_async: ERROR - tracker is null\n");
     return;
   }
 
-  dispatch_async(dispatch_get_main_queue(), ^{
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate_async: running on main queue\n");
+  // Wait 15 seconds to ensure objc runtime and all classes are fully loaded
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15.0 * NSEC_PER_SEC)),
+                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate_async: running discovery after delay\n");
     if (discover_and_populate(tracker)) {
       fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate_async: discovery complete\n");
       swift::runtime_analysis::ClassTracker::build_index_cache(tracker);

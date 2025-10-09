@@ -31,6 +31,14 @@ static inline const char* get_class_name(const HeapMetadata* metadata) {
     fprintf(stderr, "[YSWIFT] get_class_name: metadata is null\n");
     return nullptr;
   }
+
+  // Validate metadata pointer - must be properly aligned and in valid address range
+  uintptr_t ptr = reinterpret_cast<uintptr_t>(metadata);
+  if (ptr < 0x1000 || (ptr & 0x7) != 0) {
+    fprintf(stderr, "[YSWIFT] get_class_name: invalid metadata pointer=%p (too small or misaligned)\n", (void*)metadata);
+    return nullptr;
+  }
+
   Class cls = reinterpret_cast<Class>(const_cast<HeapMetadata*>(metadata));
   const char* name = class_getName(cls);
   fprintf(stderr, "[YSWIFT] get_class_name: metadata=%p -> name=%s\n", (void*)metadata, name ? name : "(null)");
