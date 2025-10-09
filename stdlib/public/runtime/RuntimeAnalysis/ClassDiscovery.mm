@@ -27,17 +27,11 @@ extern struct TrackerData {
 };
 
 const char* ClassDiscovery::get_bundle_path() {
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::get_bundle_path: called\n");
-  fflush(stderr);
   static char bundle_path[512] = {0};
   static size_t bundle_path_len = 0;
 
   if (!bundle_path[0]) {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::get_bundle_path: calling _dyld_image_count...\n");
-    fflush(stderr);
     uint32_t n = _dyld_image_count();
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::get_bundle_path: found %u images\n", n);
-    fflush(stderr);
     for (uint32_t i = 0; i < n; i++) {
       const struct mach_header *hdr = _dyld_get_image_header(i);
       if (hdr && hdr->filetype == MH_EXECUTE) {
@@ -91,26 +85,16 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
     return false; // Already populated
   }
 
-  // Get bundle path first (this might help initialize runtime)
-  const char* bundle = get_bundle_path();
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: bundle_path='%s'\n",
-          bundle ? bundle : "(null)");
-
   // Get all classes from runtime
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: calling objc_copyClassList...\n");
-  fflush(stderr);
   unsigned int num_classes = 0;
   Class *classes = objc_copyClassList(&num_classes);
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: objc_copyClassList returned\n");
-  fflush(stderr);
+  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: objc_copyClassList returned with %u classes\n", num_classes);
 
   if (!classes) {
     fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: ERROR - objc_copyClassList failed\n");
     return false;
   }
-
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: found %u total classes from runtime\n", num_classes);
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: starting iteration...\n");
 
   size_t entry_index = 0;
   size_t skipped_not_app = 0;
@@ -118,22 +102,16 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
 
   // Iterate through all classes and populate sequentially
   for (unsigned int i = 0; i < num_classes && entry_index < TrackerData::TABLE_SIZE; ++i) {
-    if (i % 1000 == 0) {
+    if (i % 5000 == 0 && i > 0) {
       fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: progress - processed %u/%u classes, added %zu app classes\n",
               i, num_classes, entry_index);
-      fflush(stderr);
     }
 
     Class cls = classes[i];
     if (!cls) continue;
 
     // Get image name
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: calling class_getImageName for class %u...\n", i);
-    fflush(stderr);
     const char *image_name = class_getImageName(cls);
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: class_getImageName returned '%s'\n",
-            image_name ? image_name : "(null)");
-    fflush(stderr);
     if (!is_app_class(image_name)) {
       skipped_not_app++;
       continue;
@@ -155,13 +133,8 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
     entry.init_count.store(0, std::memory_order_release);
     entry.deinit_count.store(0, std::memory_order_release);
 
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: added '%s' at index %zu (from image '%s')\n",
-            class_name, entry_index, image_name ? image_name : "(null)");
-
     entry_index++;
   }
-
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: iteration completed\n");
 
   free(classes);
 

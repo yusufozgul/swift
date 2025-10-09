@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <string>
 #include <cstdio>
+#include <dispatch/dispatch.h>
 
 namespace swift {
 namespace runtime_analysis {
@@ -33,6 +34,7 @@ struct TrackerData {
 
 static std::atomic<TrackerData*> g_tracker{nullptr};
 static std::once_flag g_init_flag;
+static std::atomic<bool> g_init_started{false};
 static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
 
 // Helper: Extract class name from metadata
@@ -104,19 +106,19 @@ void ClassTracker::initialize() {
 }
 
 void ClassTracker::track_init(const HeapMetadata* metadata) {
-  fprintf(stderr, "[YSWIFT] track_init: called with metadata=%p\n", (void*)metadata);
+  // Fast path: check if tracker is ready
   auto tracker = g_tracker.load(std::memory_order_acquire);
   if (!tracker) {
-    fprintf(stderr, "[YSWIFT] track_init: tracker not initialized, calling initialize()\n");
-    initialize();
-    tracker = g_tracker.load(std::memory_order_acquire);
-    if (!tracker) {
-      fprintf(stderr, "[YSWIFT] track_init: ERROR - tracker still null after initialization\n");
-      return;
+    // Start initialization asynchronously on first call
+    bool expected = false;
+    if (g_init_started.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      // We won the race - start initialization in background
+      dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        initialize();
+      });
     }
-    fprintf(stderr, "[YSWIFT] track_init: tracker initialized successfully, proceeding\n");
-  } else {
-    fprintf(stderr, "[YSWIFT] track_init: tracker already initialized at %p\n", (void*)tracker);
+    // Skip tracking this instance - tracker not ready yet
+    return;
   }
 
   const char* name = get_class_name(metadata);
@@ -127,10 +129,10 @@ void ClassTracker::track_init(const HeapMetadata* metadata) {
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
-  fprintf(stderr, "[YSWIFT] track_deinit: called with object=%p\n", (void*)object);
+  // Fast path: check if tracker is ready
   auto tracker = g_tracker.load(std::memory_order_acquire);
   if (!tracker) {
-    fprintf(stderr, "[YSWIFT] track_deinit: tracker is null, skipping\n");
+    // Tracker not ready yet - skip tracking
     return;
   }
 
