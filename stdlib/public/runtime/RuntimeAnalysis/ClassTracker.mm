@@ -23,6 +23,7 @@ namespace runtime_analysis {
 static std::atomic<TrackerData*> g_tracker{nullptr};
 static std::once_flag g_init_flag;
 static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
+static std::mutex g_cache_mutex;
 
 // Helper: Extract class name from metadata
 static inline const char* get_class_name(const HeapMetadata* metadata) {
@@ -44,6 +45,8 @@ static inline size_t get_class_index(const char* class_name) {
     return SIZE_MAX;
   }
 
+  std::lock_guard<std::mutex> lock(g_cache_mutex);
+
   if (!g_class_index_cache) {
     fprintf(stderr, "[YSWIFT] get_class_index: cache not initialized\n");
     return SIZE_MAX;
@@ -51,7 +54,6 @@ static inline size_t get_class_index(const char* class_name) {
 
   auto it = g_class_index_cache->find(class_name);
   if (it == g_class_index_cache->end()) {
-    fprintf(stderr, "[YSWIFT] get_class_index: class '%s' not found in cache\n", class_name);
     return SIZE_MAX;
   }
 
@@ -66,6 +68,8 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
     fprintf(stderr, "[YSWIFT] build_index_cache: ERROR - tracker is null\n");
     return;
   }
+
+  std::lock_guard<std::mutex> lock(g_cache_mutex);
 
   if (!g_class_index_cache) {
     g_class_index_cache = new std::unordered_map<std::string, size_t>();
@@ -147,4 +151,5 @@ static void auto_initialize_class_tracker() {
 
   fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: starting early initialization\n");
   swift::runtime_analysis::ClassTracker::initialize();
+  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: done early initialization\n");
 }

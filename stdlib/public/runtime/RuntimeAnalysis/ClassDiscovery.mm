@@ -64,32 +64,38 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
     return false;
   }
 
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: querying classes from executable: %s\n", exec_path);
+  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: querying all classes using objc_copyClassList\n");
   unsigned int class_count = 0;
-  const char **class_names = objc_copyClassNamesForImage(exec_path, &class_count);
+  Class *all_classes = objc_copyClassList(&class_count);
 
-  if (!class_names) {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: ERROR - objc_copyClassNamesForImage returned null\n");
+  if (!all_classes) {
+    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: ERROR - objc_copyClassList returned null\n");
     return false;
   }
 
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: found %u classes in executable\n", class_count);
+  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: found %u total classes\n", class_count);
 
   size_t entry_index = 0;
   for (unsigned int i = 0; i < class_count && entry_index < TrackerData::TABLE_SIZE; i++) {
-    auto& entry = tracker->entries[entry_index];
-    snprintf(entry.name, sizeof(entry.name), "%s", class_names[i]);
-    entry.init_count.store(0, std::memory_order_relaxed);
-    entry.deinit_count.store(0, std::memory_order_relaxed);
+    const char* class_name = class_getName(all_classes[i]);
+    if (!class_name) continue;
 
-    if (entry_index < 10) {  // Log first 10 classes
-      fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: [%zu] %s\n", entry_index, class_names[i]);
+    // Filter to only include classes from the main executable
+    const char* image_name = class_getImageName(all_classes[i]);
+    if (image_name && strstr(image_name, exec_path)) {
+      auto& entry = tracker->entries[entry_index];
+      snprintf(entry.name, sizeof(entry.name), "%s", class_name);
+      entry.init_count.store(0, std::memory_order_relaxed);
+      entry.deinit_count.store(0, std::memory_order_relaxed);
+      entry_index++;
+
+      if (entry_index <= 10) {
+        fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: added class '%s'\n", class_name);
+      }
     }
-
-    entry_index++;
   }
 
-  free(class_names);
+  free(all_classes);
 
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: completed - added %zu classes from main executable\n", entry_index);
   return entry_index > 0;
