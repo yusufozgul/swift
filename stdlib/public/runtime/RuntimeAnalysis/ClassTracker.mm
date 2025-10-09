@@ -72,8 +72,10 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
   size_t count = 0;
   for (size_t i = 0; i < TrackerData::TABLE_SIZE; ++i) {
     const char* name = tracker->entries[i].name;
-    (*g_class_index_cache)[std::string(name)] = i;
-    count++;
+    if (name[0] != '\0') {  // Only cache non-empty entries
+      (*g_class_index_cache)[std::string(name)] = i;
+      count++;
+    }
   }
   fprintf(stderr, "[YSWIFT] build_index_cache: completed, cached %zu classes\n", count);
 }

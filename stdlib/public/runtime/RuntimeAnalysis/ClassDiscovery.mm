@@ -87,16 +87,59 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
 
   size_t entry_index = 0;
 
+  // Cache bundle path and length for faster comparison
+  const char* bundle = get_bundle_path();
+  if (!bundle) {
+    free(classes);
+    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: ERROR - no bundle path found\n");
+    return false;
+  }
+  size_t bundle_len = strlen(bundle);
+  const char* frameworks_str = "/Frameworks/";
+
+  // Cache to avoid redundant image checks
+  struct ImageCache {
+    const char* name;
+    bool is_app;
+  };
+  ImageCache image_cache[256] = {{nullptr, false}};
+  size_t cache_index = 0;
+
   // Iterate through all classes and populate sequentially
   for (unsigned int i = 0; i < num_classes && entry_index < TrackerData::TABLE_SIZE; ++i) {
     Class cls = classes[i];
     if (!cls) continue;
 
-    // Get image name
+    // Get image name and check cache
     const char *image_name = class_getImageName(cls);
-    if (!is_app_class(image_name)) {
-      continue;
+    if (!image_name) continue;
+
+    bool is_app = false;
+    bool found_in_cache = false;
+
+    // Check cache first (last 256 images)
+    for (size_t j = 0; j < cache_index && j < 256; ++j) {
+      if (image_cache[j].name == image_name) {
+        is_app = image_cache[j].is_app;
+        found_in_cache = true;
+        break;
+      }
     }
+
+    if (!found_in_cache) {
+      // Inline is_app_class check for performance
+      is_app = (strncmp(image_name, bundle, bundle_len) == 0) &&
+               (strstr(image_name, frameworks_str) == nullptr);
+
+      // Add to cache
+      if (cache_index < 256) {
+        image_cache[cache_index].name = image_name;
+        image_cache[cache_index].is_app = is_app;
+        cache_index++;
+      }
+    }
+
+    if (!is_app) continue;
 
     // Get class name
     const char *class_name = class_getName(cls);
@@ -106,10 +149,17 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
 
     auto& entry = tracker->entries[entry_index];
 
-    strncpy(entry.name, class_name, sizeof(entry.name) - 1);
-    entry.name[sizeof(entry.name) - 1] = '\0';
-    entry.init_count.store(0, std::memory_order_release);
-    entry.deinit_count.store(0, std::memory_order_release);
+    // Faster string copy for small strings
+    size_t name_len = 0;
+    while (class_name[name_len] && name_len < sizeof(entry.name) - 1) {
+      entry.name[name_len] = class_name[name_len];
+      name_len++;
+    }
+    entry.name[name_len] = '\0';
+
+    // Use relaxed ordering for initialization (no synchronization needed)
+    entry.init_count.store(0, std::memory_order_relaxed);
+    entry.deinit_count.store(0, std::memory_order_relaxed);
 
     entry_index++;
   }
