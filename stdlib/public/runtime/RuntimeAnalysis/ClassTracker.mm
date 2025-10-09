@@ -114,6 +114,9 @@ void ClassTracker::track_init(const HeapMetadata* metadata) {
       fprintf(stderr, "[YSWIFT] track_init: ERROR - tracker still null after initialization\n");
       return;
     }
+    fprintf(stderr, "[YSWIFT] track_init: tracker initialized successfully, proceeding\n");
+  } else {
+    fprintf(stderr, "[YSWIFT] track_init: tracker already initialized at %p\n", (void*)tracker);
   }
 
   const char* name = get_class_name(metadata);
