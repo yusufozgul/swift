@@ -15,6 +15,7 @@
 #include <string>
 #include <cstdio>
 #include <dispatch/dispatch.h>
+#include <objc/runtime.h>
 
 namespace swift {
 namespace runtime_analysis {
@@ -40,11 +41,8 @@ static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
 // Helper: Extract class name from metadata
 static inline const char* get_class_name(const HeapMetadata* metadata) {
   if (!metadata) return nullptr;
-
-  auto descriptor = metadata->getTypeContextDescriptor();
-  if (!descriptor) return nullptr;
-
-  return descriptor->Name.get();
+  Class cls = reinterpret_cast<Class>(const_cast<HeapMetadata*>(metadata));
+  return class_getName(cls);
 }
 
 // Helper: Get class name and find index in cache
@@ -54,11 +52,8 @@ static inline size_t get_class_index(const char* class_name) {
 
   auto it = g_class_index_cache->find(class_name);
   if (it == g_class_index_cache->end()) {
-    fprintf(stderr, "[YSWIFT] get_class_index: class '%s' not found in cache\n", class_name);
     return SIZE_MAX; // Not in cache
   }
-
-  fprintf(stderr, "[YSWIFT] get_class_index: class '%s' found at index %zu\n", class_name, it->second);
   return it->second;
 }
 
@@ -81,11 +76,7 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
 void ClassTracker::initialize() {
   fprintf(stderr, "[YSWIFT] ClassTracker::initialize: starting initialization\n");
   std::call_once(g_init_flag, []() {
-    fprintf(stderr, "[YSWIFT] ClassTracker::initialize: inside call_once\n");
-    size_t size = sizeof(TrackerData);
-    fprintf(stderr, "[YSWIFT] ClassTracker::initialize: TrackerData size=%zu bytes\n", size);
-
-    void* mem = SharedMemory::get_or_create("/swift_class_tracker", size);
+    void* mem = SharedMemory::get_or_create("/swift_class_tracker", sizeof(TrackerData));
     if (mem) {
       fprintf(stderr, "[YSWIFT] ClassTracker::initialize: shared memory created at %p\n", mem);
       auto* tracker = static_cast<TrackerData*>(mem);
@@ -97,7 +88,6 @@ void ClassTracker::initialize() {
       build_index_cache(tracker);
 
       g_tracker.store(tracker, std::memory_order_release);
-      fprintf(stderr, "[YSWIFT] ClassTracker::initialize: tracker stored in g_tracker\n");
     } else {
       fprintf(stderr, "[YSWIFT] ClassTracker::initialize: ERROR - failed to create shared memory\n");
     }

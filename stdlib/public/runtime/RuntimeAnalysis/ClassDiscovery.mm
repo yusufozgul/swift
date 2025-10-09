@@ -36,26 +36,15 @@ const char* ClassDiscovery::get_bundle_path() {
       const struct mach_header *hdr = _dyld_get_image_header(i);
       if (hdr && hdr->filetype == MH_EXECUTE) {
         const char *path = _dyld_get_image_name(i);
-        fprintf(stderr, "[YSWIFT] ClassDiscovery::get_bundle_path: found executable at '%s'\n",
-                path ? path : "(null)");
-
         const char *app = path ? strstr(path, ".app/") : nullptr;
         if (app && (size_t)(app - path + 5) < sizeof(bundle_path)) {
           bundle_path_len = (size_t)(app - path + 5);
           snprintf(bundle_path, sizeof(bundle_path), "%.*s", (int)bundle_path_len, path);
-          fprintf(stderr, "[YSWIFT] ClassDiscovery::get_bundle_path: extracted bundle path='%s'\n", bundle_path);
         }
         break;
       }
     }
-  } else {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::get_bundle_path: using cached bundle path='%s'\n", bundle_path);
   }
-
-  if (!bundle_path[0]) {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::get_bundle_path: WARNING - no bundle path found\n");
-  }
-
   return bundle_path[0] ? bundle_path : nullptr;
 }
 
@@ -97,35 +86,24 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
   }
 
   size_t entry_index = 0;
-  size_t skipped_not_app = 0;
-  size_t skipped_no_name = 0;
 
   // Iterate through all classes and populate sequentially
   for (unsigned int i = 0; i < num_classes && entry_index < TrackerData::TABLE_SIZE; ++i) {
-    if (i % 5000 == 0 && i > 0) {
-      fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: progress - processed %u/%u classes, added %zu app classes\n",
-              i, num_classes, entry_index);
-    }
-
     Class cls = classes[i];
     if (!cls) continue;
 
     // Get image name
     const char *image_name = class_getImageName(cls);
     if (!is_app_class(image_name)) {
-      skipped_not_app++;
       continue;
     }
 
     // Get class name
     const char *class_name = class_getName(cls);
     if (!class_name || !*class_name) {
-      fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: WARNING - class has no name\n");
-      skipped_no_name++;
       continue;
     }
 
-    // Populate entry sequentially
     auto& entry = tracker->entries[entry_index];
 
     strncpy(entry.name, class_name, sizeof(entry.name) - 1);
@@ -138,9 +116,7 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
 
   free(classes);
 
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: completed - added %zu app classes, skipped %zu non-app classes, skipped %zu classes with no name\n",
-          entry_index, skipped_not_app, skipped_no_name);
-
+  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: completed - added %zu app classes\n", entry_index);
   return entry_index > 0;
 }
 
