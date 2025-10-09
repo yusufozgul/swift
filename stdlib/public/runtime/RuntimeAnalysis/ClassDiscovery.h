@@ -7,11 +7,10 @@
 #ifndef SWIFT_RUNTIME_ANALYSIS_CLASS_DISCOVERY_H
 #define SWIFT_RUNTIME_ANALYSIS_CLASS_DISCOVERY_H
 
+#include "ClassTracker.h"
+
 namespace swift {
 namespace runtime_analysis {
-
-// Forward declaration
-struct TrackerData;
 
 // Class discovery and pre-population
 class ClassDiscovery {

@@ -20,19 +20,6 @@
 namespace swift {
 namespace runtime_analysis {
 
-// Hash table entry
-struct ClassEntry {
-  std::atomic<uint64_t> init_count;
-  std::atomic<uint64_t> deinit_count;
-  char name[128];
-};
-
-// Shared data structure
-struct TrackerData {
-  static constexpr size_t TABLE_SIZE = 16384;
-  ClassEntry entries[TABLE_SIZE];
-};
-
 static std::atomic<TrackerData*> g_tracker{nullptr};
 static std::once_flag g_init_flag;
 static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;

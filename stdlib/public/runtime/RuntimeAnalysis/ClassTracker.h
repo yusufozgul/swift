@@ -8,6 +8,7 @@
 #define SWIFT_RUNTIME_ANALYSIS_CLASS_TRACKER_H
 
 #include "swift/ABI/Metadata.h"
+#include <atomic>
 
 namespace swift {
 
@@ -16,8 +17,18 @@ struct HeapObject;
 
 namespace runtime_analysis {
 
-// Forward declaration
-struct TrackerData;
+// Hash table entry
+struct ClassEntry {
+  std::atomic<uint64_t> init_count;
+  std::atomic<uint64_t> deinit_count;
+  char name[128];
+};
+
+// Shared data structure
+struct TrackerData {
+  static constexpr size_t TABLE_SIZE = 16384;
+  ClassEntry entries[TABLE_SIZE];
+};
 
 // Thread-safe class lifecycle tracker
 class ClassTracker {
