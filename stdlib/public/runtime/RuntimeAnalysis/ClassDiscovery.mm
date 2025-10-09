@@ -65,10 +65,8 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
   }
 
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: querying all classes using objc_copyClassList\n");
-
-  @try {
-    unsigned int class_count = 0;
-    Class *all_classes = objc_copyClassList(&class_count);
+  unsigned int class_count = 0;
+  Class *all_classes = objc_copyClassList(&class_count);
 
   if (!all_classes) {
     fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: ERROR - objc_copyClassList returned null\n");
@@ -107,12 +105,6 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
 
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: completed - added %zu classes from main executable\n", entry_index);
   return entry_index > 0;
-
-  } @catch (NSException *exception) {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: EXCEPTION caught - %s\n",
-            [[exception description] UTF8String]);
-    return false;
-  }
 }
 
 } // namespace runtime_analysis
