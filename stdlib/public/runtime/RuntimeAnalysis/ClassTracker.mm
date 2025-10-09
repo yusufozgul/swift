@@ -110,10 +110,20 @@ void ClassTracker::initialize() {
     fprintf(stderr, "[YSWIFT] ClassTracker::initialize: shared memory obtained at %p\n", mem);
 
     auto* tracker = static_cast<TrackerData*>(mem);
-    ClassDiscovery::discover_and_populate(tracker);
-    build_index_cache(tracker);
     g_tracker.store(tracker, std::memory_order_release);
-    fprintf(stderr, "[YSWIFT] ClassTracker::initialize: initialization complete\n");
+
+    if (ClassDiscovery::is_populated(tracker)) {
+      // Shared memory already has data - load it synchronously
+      fprintf(stderr, "[YSWIFT] ClassTracker::initialize: shared memory already populated\n");
+      ClassDiscovery::load_existing_data_sync(tracker);
+      build_index_cache(tracker);
+      fprintf(stderr, "[YSWIFT] ClassTracker::initialize: initialization complete (using existing data)\n");
+    } else {
+      // Shared memory empty - schedule async discovery (runtime will be ready)
+      fprintf(stderr, "[YSWIFT] ClassTracker::initialize: shared memory empty, scheduling async discovery\n");
+      ClassDiscovery::discover_and_populate_async(tracker);
+      fprintf(stderr, "[YSWIFT] ClassTracker::initialize: initialization complete (discovery scheduled)\n");
+    }
   });
 }
 
