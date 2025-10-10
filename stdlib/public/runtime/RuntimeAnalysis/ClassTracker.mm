@@ -8,12 +8,12 @@
 #include "ClassDiscovery.h"
 #include "SharedMemory.h"
 #include "swift/Runtime/HeapObject.h"
+#include "swift/Runtime/Metadata.h"
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
 #include <string>
 #include <cstdio>
-#include <objc/runtime.h>
 #include <dispatch/dispatch.h>
 
 namespace swift {
@@ -73,8 +73,14 @@ void ClassTracker::track_init(const HeapObject* object) {
     return;
   }
 
-  const char* name = object_getClassName((__bridge id)object);
-  if (!name) return;
+  const HeapMetadata *metadata = object->metadata;
+  if (!metadata || metadata->getKind() != MetadataKind::Class) {
+    return;
+  }
+
+  // Get the qualified (full module) name from metadata
+  std::string qualifiedName = nameForMetadata(metadata, true);
+  const char* name = qualifiedName.c_str();
 
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
@@ -88,8 +94,14 @@ void ClassTracker::track_deinit(const HeapObject* object) {
     return;
   }
 
-  const char* name = object_getClassName((__bridge id)object);
-  if (!name) return;
+  const HeapMetadata *metadata = object->metadata;
+  if (!metadata || metadata->getKind() != MetadataKind::Class) {
+    return;
+  }
+
+  // Get the qualified (full module) name from metadata
+  std::string qualifiedName = nameForMetadata(metadata, true);
+  const char* name = qualifiedName.c_str();
 
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
