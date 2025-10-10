@@ -39,9 +39,6 @@ public:
   // Record class deinitialization
   static void track_deinit(const HeapObject* object);
 
-  // Initialize tracker (called once)
-  static void initialize();
-
   // Build local index cache from shared memory
   static void build_index_cache(TrackerData* tracker);
 };

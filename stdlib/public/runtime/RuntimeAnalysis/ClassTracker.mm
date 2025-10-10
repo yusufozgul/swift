@@ -18,8 +18,7 @@
 namespace swift {
 namespace runtime_analysis {
 
-static std::atomic<TrackerData*> g_tracker{nullptr};
-static std::once_flag g_init_flag;
+std::atomic<TrackerData*> g_tracker{nullptr};
 static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
 
 // Helper: Extract class name from metadata
@@ -82,31 +81,9 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
   fprintf(stderr, "[YSWIFT] build_index_cache: completed, cached %zu classes\n", count);
 }
 
-void ClassTracker::initialize() {
-  fprintf(stderr, "[YSWIFT] ClassTracker::initialize: called\n");
-
-  std::call_once(g_init_flag, []() {
-    fprintf(stderr, "[YSWIFT] ClassTracker::initialize: first-time initialization\n");
-
-    void* mem = SharedMemory::get_or_create("/swift_class_tracker", sizeof(TrackerData));
-    if (!mem) {
-      fprintf(stderr, "[YSWIFT] ClassTracker::initialize: ERROR - failed to get shared memory\n");
-      return;
-    }
-    fprintf(stderr, "[YSWIFT] ClassTracker::initialize: shared memory obtained at %p\n", mem);
-
-    auto* tracker = static_cast<TrackerData*>(mem);
-    ClassDiscovery::discover_and_populate(tracker);
-    build_index_cache(tracker);
-    g_tracker.store(tracker, std::memory_order_release);
-    fprintf(stderr, "[YSWIFT] ClassTracker::initialize: initialization complete\n");
-  });
-}
-
 void ClassTracker::track_init(const HeapMetadata* metadata) {
   auto tracker = g_tracker.load(std::memory_order_acquire);
   if (!tracker) {
-    fprintf(stderr, "[YSWIFT] track_init: tracker not initialized\n");
     return;
   }
 
@@ -120,7 +97,6 @@ void ClassTracker::track_init(const HeapMetadata* metadata) {
 void ClassTracker::track_deinit(const HeapObject* object) {
   auto tracker = g_tracker.load(std::memory_order_acquire);
   if (!tracker) {
-    fprintf(stderr, "[YSWIFT] track_deinit: tracker not initialized\n");
     return;
   }
 
@@ -139,7 +115,18 @@ static void auto_initialize_class_tracker() {
   static const char* env = getenv("SWIFT_CLASS_TRACKING");
   if (!env || env[0] != '1') return;
 
-  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: starting early initialization\n");
-  swift::runtime_analysis::ClassTracker::initialize();
-  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: done early initialization\n");
+  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: starting initialization\n");
+
+  void* mem = swift::runtime_analysis::SharedMemory::get_or_create("/swift_class_tracker", sizeof(swift::runtime_analysis::TrackerData));
+  if (!mem) {
+    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: ERROR - failed to get shared memory\n");
+    return;
+  }
+  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: shared memory obtained at %p\n", mem);
+
+  auto* tracker = static_cast<swift::runtime_analysis::TrackerData*>(mem);
+  swift::runtime_analysis::ClassDiscovery::discover_and_populate(tracker);
+  swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
+  swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
+  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: initialization complete\n");
 }
