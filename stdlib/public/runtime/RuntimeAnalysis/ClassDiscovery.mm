@@ -84,12 +84,8 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
     return true;
   }
 
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: tracker is empty, calling discover_class_list\n");
-  discover_class_list(tracker);
-
-  bool success = tracker->entries[0].name[0] != '\0';
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: completed - success=%d\n", success);
-  return success;
+  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: tracker is empty, returning false for lazy initialization\n");
+  return false;
 }
 
 } // namespace runtime_analysis

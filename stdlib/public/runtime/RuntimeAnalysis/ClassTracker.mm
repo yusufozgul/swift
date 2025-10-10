@@ -14,6 +14,7 @@
 #include <string>
 #include <cstdio>
 #include <objc/runtime.h>
+#include <dispatch/dispatch.h>
 
 namespace swift {
 namespace runtime_analysis {
@@ -125,8 +126,25 @@ static void auto_initialize_class_tracker() {
   fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: shared memory obtained at %p\n", mem);
 
   auto* tracker = static_cast<swift::runtime_analysis::TrackerData*>(mem);
-  swift::runtime_analysis::ClassDiscovery::discover_and_populate(tracker);
-  swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
-  swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
-  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: initialization complete\n");
+  bool already_populated = swift::runtime_analysis::ClassDiscovery::discover_and_populate(tracker);
+
+  if (already_populated) {
+    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: tracker was already populated, building cache immediately\n");
+    swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
+    swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
+    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: initialization complete\n");
+  } else {
+    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: tracker is empty, scheduling lazy discovery in 15 seconds\n");
+    swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15.0 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+      fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery starting after 15s delay\n");
+      swift::runtime_analysis::ClassDiscovery::discover_class_list(tracker);
+      swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
+      fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery complete\n");
+    });
+
+    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: initialization complete (lazy mode)\n");
+  }
 }
