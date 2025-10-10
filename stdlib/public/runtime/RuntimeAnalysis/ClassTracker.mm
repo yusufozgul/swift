@@ -137,13 +137,13 @@ static void auto_initialize_class_tracker() {
   } else {
     fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: tracker is empty, scheduling lazy discovery in 1 seconds\n");
 
-    //dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
-    //               dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
       fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery starting after 1s delay\n");
       swift::runtime_analysis::ClassDiscovery::discover_class_list(tracker);
       swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
       swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
       fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery complete, tracker activated\n");
-    //});
+    });
   }
 }
