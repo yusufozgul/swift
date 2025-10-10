@@ -34,7 +34,7 @@ struct TrackerData {
 class ClassTracker {
 public:
   // Record class initialization
-  static void track_init(const HeapMetadata* metadata);
+  static void track_init(const HeapObject* object);
 
   // Record class deinitialization
   static void track_deinit(const HeapObject* object);

@@ -289,7 +289,7 @@ static HeapObject *_swift_allocObject_(HeapMetadata const *metadata,
   SWIFT_LEAKS_START_TRACKING_OBJECT(object);
 
   // Track class initialization
-  runtime_analysis::ClassTracker::track_init(metadata);
+  runtime_analysis::ClassTracker::track_init(object);
 
   SWIFT_RT_TRACK_INVOCATION(object, swift_allocObject);
   return object;

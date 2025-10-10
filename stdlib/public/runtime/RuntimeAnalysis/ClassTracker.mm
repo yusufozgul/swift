@@ -22,18 +22,6 @@ namespace runtime_analysis {
 std::atomic<TrackerData*> g_tracker{nullptr};
 static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
 
-// Helper: Extract class name from metadata
-static inline const char* get_class_name(const HeapMetadata* metadata) {
-  if (!metadata) {
-    fprintf(stderr, "[YSWIFT] get_class_name: metadata is null\n");
-    return nullptr;
-  }
-  Class cls = reinterpret_cast<Class>(const_cast<HeapMetadata*>(metadata));
-  const char* name = class_getName(cls);
-  fprintf(stderr, "[YSWIFT] get_class_name: metadata=%p -> name=%s\n", (void*)metadata, name ? name : "(null)");
-  return name;
-}
-
 // Helper: Get class name and find index in cache
 // Returns SIZE_MAX if not found
 static inline size_t get_class_index(const char* class_name) {
@@ -79,30 +67,34 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
   fprintf(stderr, "[YSWIFT] build_index_cache: completed, cached %zu classes\n", count);
 }
 
-void ClassTracker::track_init(const HeapMetadata* metadata) {
+void ClassTracker::track_init(const HeapObject* object) {
   auto tracker = g_tracker.load(std::memory_order_acquire);
-  if (!tracker) {
+  if (!tracker || !object) {
     return;
   }
 
-  const char* name = get_class_name(metadata);
+  const char* name = object_getClassName((__bridge id)object);
+  if (!name) return;
+
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
 
-  uint64_t new_count = tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed) + 1;
+  tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
   auto tracker = g_tracker.load(std::memory_order_acquire);
-  if (!tracker) {
+  if (!tracker || !object) {
     return;
   }
 
-  const char* name = get_class_name(object->metadata);
+  const char* name = object_getClassName((__bridge id)object);
+  if (!name) return;
+
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
 
-  uint64_t new_count = tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed) + 1;
+  tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 } // namespace runtime_analysis
