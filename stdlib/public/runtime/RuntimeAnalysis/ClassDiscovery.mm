@@ -64,12 +64,15 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
     return;
   }
 
+  // Capture executableName as const char* for block
+  const char* execNameForBlock = executableName;
+
   // Parallel filtering using GCD
   dispatch_apply(class_count, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^(size_t i) {
     Class cls = all_classes[i];
     const char* imageName = class_getImageName(cls);
 
-    if (imageName && strstr(imageName, executableName) != nullptr) {
+    if (imageName && strstr(imageName, execNameForBlock) != nullptr) {
       const char* className = class_getName(cls);
       if (className) {
         size_t index = match_count.fetch_add(1, std::memory_order_relaxed);
