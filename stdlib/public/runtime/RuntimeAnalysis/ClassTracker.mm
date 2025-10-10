@@ -141,5 +141,5 @@ static void auto_initialize_class_tracker() {
 
   fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: starting early initialization\n");
   swift::runtime_analysis::ClassTracker::initialize();
-  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: starting early initialization\n");
+  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: done early initialization\n");
 }

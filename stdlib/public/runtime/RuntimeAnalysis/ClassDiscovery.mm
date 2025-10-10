@@ -64,27 +64,67 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
     return false;
   }
 
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: querying classes from executable: %s\n", exec_path);
-  unsigned int class_count = 0;
-  const char **class_names = objc_copyClassNamesForImage(exec_path, &class_count);
+  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: querying all registered classes\n");
 
-  if (!class_names) {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: ERROR - objc_copyClassNamesForImage returned null\n");
+  unsigned int class_count = 0;
+  Class *all_classes = objc_copyClassList(&class_count);
+
+  if (!all_classes) {
+    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: ERROR - objc_copyClassList failed\n");
     return false;
   }
 
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: found %u classes in executable\n", class_count);
+  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: found %u total registered classes\n", class_count);
+
+  // Get main executable header for filtering
+  const struct mach_header *main_header = nullptr;
+  uint32_t image_count = _dyld_image_count();
+  for (uint32_t i = 0; i < image_count; i++) {
+    const struct mach_header *hdr = _dyld_get_image_header(i);
+    if (hdr && hdr->filetype == MH_EXECUTE) {
+      main_header = hdr;
+      break;
+    }
+  }
 
   size_t entry_index = 0;
+  size_t filtered_count = 0;
   for (unsigned int i = 0; i < class_count && entry_index < TrackerData::TABLE_SIZE; i++) {
+    Class cls = all_classes[i];
+    const char* class_name = class_getName(cls);
+    if (!class_name) continue;
+
+    // Get the image (binary) that contains this class
+    const char* image_name = class_getImageName(cls);
+    if (!image_name) continue;
+
+    // Check if class is from main executable
+    if (main_header) {
+      const struct mach_header *class_header = nullptr;
+      for (uint32_t j = 0; j < image_count; j++) {
+        if (strcmp(_dyld_get_image_name(j), image_name) == 0) {
+          class_header = _dyld_get_image_header(j);
+          break;
+        }
+      }
+
+      // Skip if not from main executable
+      if (class_header != main_header) {
+        filtered_count++;
+        continue;
+      }
+    }
+
     auto& entry = tracker->entries[entry_index];
-    snprintf(entry.name, sizeof(entry.name), "%s", class_names[i]);
+    snprintf(entry.name, sizeof(entry.name), "%s", class_name);
     entry.init_count.store(0, std::memory_order_relaxed);
     entry.deinit_count.store(0, std::memory_order_relaxed);
     entry_index++;
   }
 
-  free(class_names);
+  free(all_classes);
+
+  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: filtered out %zu system/framework classes\n", filtered_count);
 
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: completed - added %zu classes from main executable\n", entry_index);
   return entry_index > 0;
