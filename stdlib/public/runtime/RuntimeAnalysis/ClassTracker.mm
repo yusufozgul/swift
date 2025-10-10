@@ -74,9 +74,6 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
     if (name[0] != '\0') {
       (*g_class_index_cache)[std::string(name)] = i;
       count++;
-      if (count <= 10) {  // Log first 10 classes
-        fprintf(stderr, "[YSWIFT] build_index_cache: added class '%s' at index %zu\n", name, i);
-      }
     }
   }
   fprintf(stderr, "[YSWIFT] build_index_cache: completed, cached %zu classes\n", count);
@@ -88,11 +85,11 @@ void ClassTracker::track_init(const HeapMetadata* metadata) {
     return;
   }
 
-  //const char* name = get_class_name(metadata);
-  //size_t idx = get_class_index(name);
-  //if (idx == SIZE_MAX) return;
+  const char* name = get_class_name(metadata);
+  size_t idx = get_class_index(name);
+  if (idx == SIZE_MAX) return;
 
-  //uint64_t new_count = tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed) + 1;
+  uint64_t new_count = tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
@@ -101,11 +98,11 @@ void ClassTracker::track_deinit(const HeapObject* object) {
     return;
   }
 
-  //const char* name = get_class_name(object->metadata);
-  //size_t idx = get_class_index(name);
-  //if (idx == SIZE_MAX) return;
+  const char* name = get_class_name(object->metadata);
+  size_t idx = get_class_index(name);
+  if (idx == SIZE_MAX) return;
 
-  //uint64_t new_count = tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed) + 1;
+  uint64_t new_count = tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
 } // namespace runtime_analysis
@@ -135,16 +132,14 @@ static void auto_initialize_class_tracker() {
     fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: initialization complete\n");
   } else {
     fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: tracker is empty, scheduling lazy discovery in 15 seconds\n");
-    swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15.0 * NSEC_PER_SEC)),
                    dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
       fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery starting after 15s delay\n");
       swift::runtime_analysis::ClassDiscovery::discover_class_list(tracker);
       swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
-      fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery complete\n");
+      swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
+      fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery complete, tracker activated\n");
     });
-
-    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: initialization complete (lazy mode)\n");
   }
 }

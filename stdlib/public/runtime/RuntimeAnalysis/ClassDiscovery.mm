@@ -66,8 +66,6 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
       snprintf(entry.name, sizeof(entry.name), "%s", className);
       entry.init_count.store(0, std::memory_order_relaxed);
       entry.deinit_count.store(0, std::memory_order_relaxed);
-
-      fprintf(stderr, "[YSWIFT] discover_class_list: added class=%s\n", className);
       entry_index++;
     }
   }
@@ -79,8 +77,7 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: called with tracker=%p\n", (void*)tracker);
 
   if (tracker->entries[0].name[0] != '\0') {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: tracker already populated (first entry='%s'), loading from shared memory\n",
-            tracker->entries[0].name);
+    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: shared memory loaded\n");
     return true;
   }
 
