@@ -135,7 +135,7 @@ static void auto_initialize_class_tracker() {
     swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
     fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: initialization complete\n");
   } else {
-    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: tracker is empty, scheduling lazy discovery in 15 seconds\n");
+    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: tracker is empty, scheduling lazy discovery in 1 seconds\n");
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                    dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{

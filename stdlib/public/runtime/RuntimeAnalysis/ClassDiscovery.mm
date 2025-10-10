@@ -50,27 +50,48 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
 
   fprintf(stderr, "[YSWIFT] discover_class_list: found %u total registered classes\n", class_count);
 
-  size_t entry_index = 0;
+  // Parallel filtering phase: find matching classes concurrently
+  __block std::atomic<size_t> match_count{0};
 
-  for (unsigned int i = 0; i < class_count && entry_index < TrackerData::TABLE_SIZE; i++) {
-    Class cls = all_classes[i];
-
-    const char* imageName = class_getImageName(cls);
-    if (!imageName) continue;
-
-    if (strstr(imageName, executableName) != nullptr) {
-      const char* className = class_getName(cls);
-      if (!className) continue;
-
-      auto& entry = tracker->entries[entry_index];
-      snprintf(entry.name, sizeof(entry.name), "%s", className);
-      entry.init_count.store(0, std::memory_order_relaxed);
-      entry.deinit_count.store(0, std::memory_order_relaxed);
-      entry_index++;
-    }
+  // Pre-allocate array for matched classes (worst case: all classes match)
+  struct MatchedClass {
+    const char* name;
+    const char* imageName;
+  };
+  MatchedClass* matched_classes = (MatchedClass*)calloc(class_count, sizeof(MatchedClass));
+  if (!matched_classes) {
+    fprintf(stderr, "[YSWIFT] discover_class_list: ERROR - failed to allocate matched_classes array\n");
+    return;
   }
 
-  fprintf(stderr, "[YSWIFT] discover_class_list: completed - added %zu classes to tracker\n", entry_index);
+  // Parallel filtering using GCD
+  dispatch_apply(class_count, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^(size_t i) {
+    Class cls = all_classes[i];
+    const char* imageName = class_getImageName(cls);
+
+    if (imageName && strstr(imageName, executableName) != nullptr) {
+      const char* className = class_getName(cls);
+      if (className) {
+        size_t index = match_count.fetch_add(1, std::memory_order_relaxed);
+        if (index < TrackerData::TABLE_SIZE) {
+          matched_classes[index].name = className;
+          matched_classes[index].imageName = imageName;
+        }
+      }
+    }
+  });
+
+  // Sequential write phase: populate tracker entries
+  size_t final_count = std::min(match_count.load(), (size_t)TrackerData::TABLE_SIZE);
+  for (size_t i = 0; i < final_count; i++) {
+    auto& entry = tracker->entries[i];
+    snprintf(entry.name, sizeof(entry.name), "%s", matched_classes[i].name);
+    entry.init_count.store(0, std::memory_order_relaxed);
+    entry.deinit_count.store(0, std::memory_order_relaxed);
+  }
+
+  free(matched_classes);
+  fprintf(stderr, "[YSWIFT] discover_class_list: completed - added %zu classes to tracker\n", final_count);
 }
 
 bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
