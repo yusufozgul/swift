@@ -9,12 +9,10 @@
 #include "SharedMemory.h"
 #include "swift/Runtime/HeapObject.h"
 #include <atomic>
-#include <cstring>
+#include <mutex>
 #include <unordered_map>
 #include <string>
 #include <cstdio>
-#include <pthread.h>
-#include <dispatch/dispatch.h>
 #include <objc/runtime.h>
 
 namespace swift {
@@ -23,7 +21,6 @@ namespace runtime_analysis {
 static std::atomic<TrackerData*> g_tracker{nullptr};
 static std::once_flag g_init_flag;
 static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
-static pthread_mutex_t g_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Helper: Extract class name from metadata
 static inline const char* get_class_name(const HeapMetadata* metadata) {
@@ -31,14 +28,6 @@ static inline const char* get_class_name(const HeapMetadata* metadata) {
     fprintf(stderr, "[YSWIFT] get_class_name: metadata is null\n");
     return nullptr;
   }
-
-  // Validate metadata pointer - must be properly aligned and in valid address range
-  uintptr_t ptr = reinterpret_cast<uintptr_t>(metadata);
-  if (ptr < 0x1000 || (ptr & 0x7) != 0) {
-    fprintf(stderr, "[YSWIFT] get_class_name: invalid metadata pointer=%p (too small or misaligned)\n", (void*)metadata);
-    return nullptr;
-  }
-
   Class cls = reinterpret_cast<Class>(const_cast<HeapMetadata*>(metadata));
   const char* name = class_getName(cls);
   fprintf(stderr, "[YSWIFT] get_class_name: metadata=%p -> name=%s\n", (void*)metadata, name ? name : "(null)");
@@ -53,24 +42,17 @@ static inline size_t get_class_index(const char* class_name) {
     return SIZE_MAX;
   }
 
-  pthread_mutex_lock(&g_cache_mutex);
-
   if (!g_class_index_cache) {
     fprintf(stderr, "[YSWIFT] get_class_index: cache not initialized\n");
-    pthread_mutex_unlock(&g_cache_mutex);
     return SIZE_MAX;
   }
 
   auto it = g_class_index_cache->find(class_name);
   if (it == g_class_index_cache->end()) {
-    pthread_mutex_unlock(&g_cache_mutex);
     return SIZE_MAX;
   }
 
-  fprintf(stderr, "[YSWIFT] get_class_index: class '%s' found at index %zu\n", class_name, it->second);
-  size_t result = it->second;
-  pthread_mutex_unlock(&g_cache_mutex);
-  return result;
+  return it->second;
 }
 
 void ClassTracker::build_index_cache(TrackerData* tracker) {
@@ -80,8 +62,6 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
     fprintf(stderr, "[YSWIFT] build_index_cache: ERROR - tracker is null\n");
     return;
   }
-
-  pthread_mutex_lock(&g_cache_mutex);
 
   if (!g_class_index_cache) {
     g_class_index_cache = new std::unordered_map<std::string, size_t>();
@@ -100,8 +80,6 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
     }
   }
   fprintf(stderr, "[YSWIFT] build_index_cache: completed, cached %zu classes\n", count);
-
-  pthread_mutex_unlock(&g_cache_mutex);
 }
 
 void ClassTracker::initialize() {
@@ -118,20 +96,10 @@ void ClassTracker::initialize() {
     fprintf(stderr, "[YSWIFT] ClassTracker::initialize: shared memory obtained at %p\n", mem);
 
     auto* tracker = static_cast<TrackerData*>(mem);
+    ClassDiscovery::discover_and_populate(tracker);
+    build_index_cache(tracker);
     g_tracker.store(tracker, std::memory_order_release);
-
-    if (ClassDiscovery::is_populated(tracker)) {
-      // Shared memory already has data - load it synchronously
-      fprintf(stderr, "[YSWIFT] ClassTracker::initialize: shared memory already populated\n");
-      ClassDiscovery::load_existing_data_sync(tracker);
-      build_index_cache(tracker);
-      fprintf(stderr, "[YSWIFT] ClassTracker::initialize: initialization complete (using existing data)\n");
-    } else {
-      // Shared memory empty - schedule async discovery (runtime will be ready)
-      fprintf(stderr, "[YSWIFT] ClassTracker::initialize: shared memory empty, scheduling async discovery\n");
-      ClassDiscovery::discover_and_populate_async(tracker);
-      fprintf(stderr, "[YSWIFT] ClassTracker::initialize: initialization complete (discovery scheduled)\n");
-    }
+    fprintf(stderr, "[YSWIFT] ClassTracker::initialize: initialization complete\n");
   });
 }
 
@@ -142,12 +110,11 @@ void ClassTracker::track_init(const HeapMetadata* metadata) {
     return;
   }
 
-  const char* name = get_class_name(metadata);
-  size_t idx = get_class_index(name);
-  if (idx == SIZE_MAX) return;
+  //const char* name = get_class_name(metadata);
+  //size_t idx = get_class_index(name);
+  //if (idx == SIZE_MAX) return;
 
-  uint64_t new_count = tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed) + 1;
-  fprintf(stderr, "[YSWIFT] track_init: class '%s' init_count=%llu\n", name, new_count);
+  //uint64_t new_count = tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
@@ -157,12 +124,11 @@ void ClassTracker::track_deinit(const HeapObject* object) {
     return;
   }
 
-  const char* name = get_class_name(object->metadata);
-  size_t idx = get_class_index(name);
-  if (idx == SIZE_MAX) return;
+  //const char* name = get_class_name(object->metadata);
+  //size_t idx = get_class_index(name);
+  //if (idx == SIZE_MAX) return;
 
-  uint64_t new_count = tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed) + 1;
-  fprintf(stderr, "[YSWIFT] track_deinit: class '%s' deinit_count=%llu\n", name, new_count);
+  //uint64_t new_count = tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
 } // namespace runtime_analysis
@@ -175,5 +141,5 @@ static void auto_initialize_class_tracker() {
 
   fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: starting early initialization\n");
   swift::runtime_analysis::ClassTracker::initialize();
-  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: done early initialization\n");
+  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: starting early initialization\n");
 }

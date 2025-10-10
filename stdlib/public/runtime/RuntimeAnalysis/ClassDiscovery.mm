@@ -44,47 +44,6 @@ const char* ClassDiscovery::get_executable_path() {
   return exec_path;
 }
 
-bool ClassDiscovery::is_populated(TrackerData* tracker) {
-  if (!tracker) {
-    return false;
-  }
-  return tracker->entries[0].name[0] != '\0';
-}
-
-void ClassDiscovery::load_existing_data_sync(TrackerData* tracker) {
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::load_existing_data_sync: loading from existing shared memory\n");
-  if (!tracker) {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::load_existing_data_sync: ERROR - tracker is null\n");
-    return;
-  }
-
-  if (!is_populated(tracker)) {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::load_existing_data_sync: shared memory is empty, nothing to load\n");
-    return;
-  }
-
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::load_existing_data_sync: data available, ready to use\n");
-}
-
-void ClassDiscovery::discover_and_populate_async(TrackerData* tracker) {
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate_async: scheduling async discovery with 15 second delay\n");
-
-  if (!tracker) {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate_async: ERROR - tracker is null\n");
-    return;
-  }
-
-  // Wait 15 seconds to ensure objc runtime and all classes are fully loaded
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15.0 * NSEC_PER_SEC)),
-                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate_async: running discovery after delay\n");
-    if (discover_and_populate(tracker)) {
-      fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate_async: discovery complete\n");
-      swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
-    }
-  });
-}
-
 bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: called with tracker=%p\n", (void*)tracker);
 
@@ -93,7 +52,7 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
     return false;
   }
 
-  if (is_populated(tracker)) {
+  if (tracker->entries[0].name[0] != '\0') {
     fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: tracker already populated (first entry='%s'), skipping\n",
             tracker->entries[0].name);
     return false;
@@ -105,39 +64,27 @@ bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
     return false;
   }
 
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: querying all classes using objc_copyClassList\n");
+  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: querying classes from executable: %s\n", exec_path);
   unsigned int class_count = 0;
-  Class *all_classes = objc_copyClassList(&class_count);
+  const char **class_names = objc_copyClassNamesForImage(exec_path, &class_count);
 
-  if (!all_classes) {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: ERROR - objc_copyClassList returned null\n");
+  if (!class_names) {
+    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: ERROR - objc_copyClassNamesForImage returned null\n");
     return false;
   }
 
-  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: found %u total classes\n", class_count);
+  fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: found %u classes in executable\n", class_count);
 
   size_t entry_index = 0;
-
   for (unsigned int i = 0; i < class_count && entry_index < TrackerData::TABLE_SIZE; i++) {
-    Class cls = all_classes[i];
-    if (!cls) continue;
-
-    const char* class_name = class_getName(cls);
-    if (!class_name || class_name[0] == '\0') continue;
-
-    // Filter to only include classes from the main executable
-    const char* image_name = class_getImageName(cls);
-
-    if (image_name && strcmp(image_name, exec_path) == 0) {
-      auto& entry = tracker->entries[entry_index];
-      snprintf(entry.name, sizeof(entry.name), "%s", class_name);
-      entry.init_count.store(0, std::memory_order_relaxed);
-      entry.deinit_count.store(0, std::memory_order_relaxed);
-      entry_index++;
-    }
+    auto& entry = tracker->entries[entry_index];
+    snprintf(entry.name, sizeof(entry.name), "%s", class_names[i]);
+    entry.init_count.store(0, std::memory_order_relaxed);
+    entry.deinit_count.store(0, std::memory_order_relaxed);
+    entry_index++;
   }
 
-  free(all_classes);
+  free(class_names);
 
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: completed - added %zu classes from main executable\n", entry_index);
   return entry_index > 0;

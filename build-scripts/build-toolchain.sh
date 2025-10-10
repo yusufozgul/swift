@@ -46,3 +46,5 @@ echo "Total time: ${HOURS}s ${MINUTES}d ${SECONDS}s"
 echo ""
 echo "📦 Toolchain location:"
 echo "   • Documents: swift-LOCAL-a.xctoolchain"
+
+# cp /Users/yusuf/Documents/swift-build/build/buildbot_osx/swift-macosx-arm64/lib/swift/iphonesimulator/libswiftCore.dylib /Users/yusuf/Desktop/VirtualBuddyShared/SwiftBuild/libswiftCore.dylib
