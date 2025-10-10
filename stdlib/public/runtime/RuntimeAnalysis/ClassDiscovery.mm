@@ -10,12 +10,64 @@
 #include <mach-o/dyld.h>
 #include <cstring>
 #include <cstdio>
+#include <semaphore.h>
+#include <fcntl.h>
+#include <errno.h>
 
 namespace swift {
 namespace runtime_analysis {
 
+// RAII wrapper for cross-process discovery lock
+class DiscoveryLock {
+  sem_t* lock_;
+  bool acquired_;
+
+public:
+  DiscoveryLock() : lock_(nullptr), acquired_(false) {
+    const char* sem_name = "/swift_class_discovery_lock";
+    lock_ = sem_open(sem_name, O_CREAT, 0644, 1);
+
+    if (lock_ == SEM_FAILED) {
+      fprintf(stderr, "[YSWIFT] DiscoveryLock: failed to open semaphore (errno=%d)\n", errno);
+      return;
+    }
+
+    fprintf(stderr, "[YSWIFT] DiscoveryLock: acquiring lock...\n");
+    sem_wait(lock_);
+    acquired_ = true;
+    fprintf(stderr, "[YSWIFT] DiscoveryLock: lock acquired\n");
+  }
+
+  ~DiscoveryLock() {
+    if (acquired_ && lock_ != SEM_FAILED) {
+      sem_post(lock_);
+      fprintf(stderr, "[YSWIFT] DiscoveryLock: lock released\n");
+    }
+  }
+
+  bool is_locked() const { return acquired_; }
+
+  // Non-copyable
+  DiscoveryLock(const DiscoveryLock&) = delete;
+  DiscoveryLock& operator=(const DiscoveryLock&) = delete;
+};
+
+// Check if tracker is already populated by another process
+static inline bool is_tracker_populated(TrackerData* tracker) {
+  return tracker && tracker->entries[0].name[0] != '\0';
+}
+
 void ClassDiscovery::discover_class_list(TrackerData* tracker) {
   fprintf(stderr, "[YSWIFT] discover_class_list: called with tracker=%p\n", (void*)tracker);
+
+  // Acquire cross-process lock
+  DiscoveryLock lock;
+
+  // Check if another process already populated
+  if (is_tracker_populated(tracker)) {
+    fprintf(stderr, "[YSWIFT] discover_class_list: already populated, skipping\n");
+    return;
+  }
 
   // Get executable path using _NSGetExecutablePath
   char executablePathBuf[PATH_MAX];
@@ -95,13 +147,18 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
 
   free(matched_classes);
   fprintf(stderr, "[YSWIFT] discover_class_list: completed - added %zu classes to tracker\n", final_count);
+  // Lock automatically released by DiscoveryLock destructor
 }
 
 bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
   fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: called with tracker=%p\n", (void*)tracker);
 
-  if (tracker->entries[0].name[0] != '\0') {
-    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: shared memory loaded\n");
+  // Acquire cross-process lock
+  DiscoveryLock lock;
+
+  // Check if already populated (double-check pattern)
+  if (is_tracker_populated(tracker)) {
+    fprintf(stderr, "[YSWIFT] ClassDiscovery::discover_and_populate: shared memory already populated\n");
     return true;
   }
 
