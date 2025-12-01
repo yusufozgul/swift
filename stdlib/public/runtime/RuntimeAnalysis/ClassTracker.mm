@@ -38,16 +38,11 @@ static inline size_t get_class_index(const char* class_name) {
 }
 
 void ClassTracker::build_index_cache(TrackerData* tracker) {
-  fprintf(stderr, "[YSWIFT] build_index_cache: called with tracker=%p\n", (void*)tracker);
-
-  if (!tracker) {
-    fprintf(stderr, "[YSWIFT] build_index_cache: ERROR - tracker is null\n");
-    return;
-  }
+  if (!tracker) return;
 
   if (!g_class_index_cache) {
     g_class_index_cache = new std::unordered_map<std::string, size_t>();
-    fprintf(stderr, "[YSWIFT] build_index_cache: created new cache\n");
+    g_class_index_cache->reserve(50000);
   }
 
   size_t count = 0;
@@ -58,7 +53,8 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
       count++;
     }
   }
-  fprintf(stderr, "[YSWIFT] build_index_cache: completed, cached %zu classes\n", count);
+  
+  fprintf(stderr, "[YSWIFT] Cached %zu classes\n", count);
 }
 
 void ClassTracker::track_init(const HeapObject* object) {
@@ -109,34 +105,27 @@ static void auto_initialize_class_tracker() {
   static const char* env = getenv("SWIFT_CLASS_TRACKING");
   if (!env || env[0] != '1') return;
 
-  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: starting initialization\n");
-
   void* mem = swift::runtime_analysis::SharedMemory::get_or_create("/swift_class_tracker", sizeof(swift::runtime_analysis::TrackerData));
   if (!mem) {
-    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: ERROR - failed to get shared memory\n");
+    fprintf(stderr, "[YSWIFT] ERROR: failed to get shared memory\n");
     return;
   }
-  fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: shared memory obtained at %p\n", mem);
 
   auto* tracker = static_cast<swift::runtime_analysis::TrackerData*>(mem);
   bool already_populated = swift::runtime_analysis::ClassDiscovery::discover_and_populate(tracker);
 
   if (already_populated) {
-    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: tracker was already populated, building cache immediately\n");
     swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
     swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
-    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: initialization complete\n");
+    fprintf(stderr, "[YSWIFT] Class tracking initialized\n");
   } else {
-    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: tracker is empty, scheduling lazy discovery\n");
-
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                    dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-      fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery started\n");
       swift::runtime_analysis::ClassDiscovery::discover_class_list(tracker);
       swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
       swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
 
-      fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery complete, tracker activated\n");
+      fprintf(stderr, "[YSWIFT] Class tracking initialized\n");
     });
   }
 }
