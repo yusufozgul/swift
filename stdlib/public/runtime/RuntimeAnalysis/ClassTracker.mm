@@ -15,45 +15,17 @@
 #include <string>
 #include <cstdio>
 #include <dispatch/dispatch.h>
-#include <dlfcn.h>
 
 namespace swift {
 namespace runtime_analysis {
 
 std::atomic<TrackerData*> g_tracker{nullptr};
 static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
-static std::atomic<bool> g_discovery_complete{false};
-static dispatch_semaphore_t g_app_semaphore = nullptr;
-
-// Check if object is from main app binary
-static inline bool is_from_main_app(const HeapObject* object) {
-  Dl_info info;
-  if (dladdr(object, &info) == 0) {
-    return false;
-  }
-
-  // Check if binary path contains ".app/"
-  const char* path = info.dli_fname;
-  if (!path) return false;
-
-  // Main app binaries are usually in /path/to/AppName.app/AppName
-  const char* app_marker = strstr(path, ".app/");
-  if (!app_marker) return false;
-  const char* framework_marker = strstr(app_marker, ".framework/");
-
-  return framework_marker == nullptr;
-}
 
 // Helper: Get class name and find index in cache
 // Returns SIZE_MAX if not found
 static inline size_t get_class_index(const char* class_name) {
-  if (!class_name || !*class_name) {
-    fprintf(stderr, "[YSWIFT] get_class_index: invalid class_name\n");
-    return SIZE_MAX;
-  }
-
-  if (!g_class_index_cache) {
-    fprintf(stderr, "[YSWIFT] get_class_index: cache not initialized\n");
+  if (!class_name || !*class_name || !g_class_index_cache) {
     return SIZE_MAX;
   }
 
@@ -90,27 +62,18 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
 }
 
 void ClassTracker::track_init(const HeapObject* object) {
-  if (is_from_main_app(object) && !g_discovery_complete.load(std::memory_order_acquire)) {
-    if (g_app_semaphore) {
-      fprintf(stderr, "[YSWIFT] track_init: waiting for discovery (main app class)\n");
-      dispatch_semaphore_wait(g_app_semaphore, DISPATCH_TIME_FOREVER);
-      dispatch_semaphore_signal(g_app_semaphore);
-    }
-  }
-
+  if (!object) return;
+  
   auto tracker = g_tracker.load(std::memory_order_acquire);
-  if (!tracker || !object) {
-    return;
-  }
+  if (!tracker) return;
 
   const HeapMetadata *metadata = object->metadata;
   if (!metadata || metadata->getKind() != MetadataKind::Class) {
     return;
   }
 
-  // Get the qualified (full module) name from metadata
-  std::string qualifiedName = nameForMetadata(metadata, true);
-  const char* name = qualifiedName.c_str();
+  auto typeName = swift::swift_getTypeName(metadata, true);
+  const char* name = typeName.data;
 
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
@@ -119,19 +82,18 @@ void ClassTracker::track_init(const HeapObject* object) {
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
+  if (!object) return;
+  
   auto tracker = g_tracker.load(std::memory_order_acquire);
-  if (!tracker || !object) {
-    return;
-  }
+  if (!tracker) return;
 
   const HeapMetadata *metadata = object->metadata;
   if (!metadata || metadata->getKind() != MetadataKind::Class) {
     return;
   }
 
-  // Get the qualified (full module) name from metadata
-  std::string qualifiedName = nameForMetadata(metadata, true);
-  const char* name = qualifiedName.c_str();
+  auto typeName = swift::swift_getTypeName(metadata, true);
+  const char* name = typeName.data;
 
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
@@ -149,9 +111,6 @@ static void auto_initialize_class_tracker() {
 
   fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: starting initialization\n");
 
-  // Create semaphore - initially locked (0)
-  swift::runtime_analysis::g_app_semaphore = dispatch_semaphore_create(0);
-
   void* mem = swift::runtime_analysis::SharedMemory::get_or_create("/swift_class_tracker", sizeof(swift::runtime_analysis::TrackerData));
   if (!mem) {
     fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: ERROR - failed to get shared memory\n");
@@ -166,22 +125,16 @@ static void auto_initialize_class_tracker() {
     fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: tracker was already populated, building cache immediately\n");
     swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
     swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
-    swift::runtime_analysis::g_discovery_complete.store(true, std::memory_order_release);
-    dispatch_semaphore_signal(swift::runtime_analysis::g_app_semaphore);
     fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: initialization complete\n");
   } else {
-    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: tracker is empty, scheduling lazy discovery in 1 seconds\n");
+    fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: tracker is empty, scheduling lazy discovery\n");
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                    dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-      fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery starting after 1s delay\n");
+      fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery started\n");
       swift::runtime_analysis::ClassDiscovery::discover_class_list(tracker);
       swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
       swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
-
-      // Mark complete and release all waiting threads
-      swift::runtime_analysis::g_discovery_complete.store(true, std::memory_order_release);
-      dispatch_semaphore_signal(swift::runtime_analysis::g_app_semaphore);
 
       fprintf(stderr, "[YSWIFT] auto_initialize_class_tracker: lazy discovery complete, tracker activated\n");
     });
