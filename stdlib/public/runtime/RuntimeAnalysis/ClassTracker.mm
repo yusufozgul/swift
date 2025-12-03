@@ -54,7 +54,7 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
     }
   }
   
-  fprintf(stderr, "[YSWIFT] Cached %zu classes\n", count);
+  fprintf(stderr, "[YSWIFT] build index cache with %zu classes\n", count);
 }
 
 void ClassTracker::track_init(const HeapObject* object) {
