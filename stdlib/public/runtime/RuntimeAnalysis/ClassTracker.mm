@@ -102,8 +102,12 @@ void ClassTracker::track_deinit(const HeapObject* object) {
 
 __attribute__((constructor))
 static void auto_initialize_class_tracker() {
+  fprintf(stderr, "[YSWIFT] Initialize Runtime Analyzer");
+
   static const char* env = getenv("SWIFT_CLASS_TRACKING");
   if (!env || env[0] != '1') return;
+
+  fprintf(stderr, "[YSWIFT] Loading Runtime Analyzer")
 
   void* mem = swift::runtime_analysis::SharedMemory::get_or_create("/swift_class_tracker", sizeof(swift::runtime_analysis::TrackerData));
   if (!mem) {
