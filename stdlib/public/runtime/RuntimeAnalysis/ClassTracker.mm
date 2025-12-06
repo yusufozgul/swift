@@ -15,23 +15,12 @@
 #include <string>
 #include <cstdio>
 #include <dispatch/dispatch.h>
-#include <mach/mach_time.h>
 
 namespace swift {
 namespace runtime_analysis {
 
 std::atomic<TrackerData*> g_tracker{nullptr};
 static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
-
-// Helper: Convert mach_absolute_time to nanoseconds
-static inline uint64_t mach_time_to_nanoseconds(uint64_t mach_time) {
-  static mach_timebase_info_data_t timebase_info;
-  static dispatch_once_t onceToken;
-  dispatch_once(&onceToken, ^{
-    mach_timebase_info(&timebase_info);
-  });
-  return (mach_time * timebase_info.numer) / timebase_info.denom;
-}
 
 // Helper: Get class name and find index in cache
 // Returns SIZE_MAX if not found
@@ -69,8 +58,6 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
 }
 
 void ClassTracker::track_init(const HeapObject* object) {
-  uint64_t start_time = mach_absolute_time();
-  
   if (!object) return;
   
   auto tracker = g_tracker.load(std::memory_order_acquire);
@@ -88,16 +75,9 @@ void ClassTracker::track_init(const HeapObject* object) {
   if (idx == SIZE_MAX) return;
 
   tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed);
-  
-  // Log timing
-  uint64_t end_time = mach_absolute_time();
-  uint64_t elapsed_ns = mach_time_to_nanoseconds(end_time - start_time);
-  fprintf(stderr, "[YSWIFT PERF] track_init(%s) took %llu ns\n", name, elapsed_ns);
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
-  uint64_t start_time = mach_absolute_time();
-  
   if (!object) return;
   
   auto tracker = g_tracker.load(std::memory_order_acquire);
@@ -115,11 +95,6 @@ void ClassTracker::track_deinit(const HeapObject* object) {
   if (idx == SIZE_MAX) return;
 
   tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed);
-  
-  // Log timing
-  uint64_t end_time = mach_absolute_time();
-  uint64_t elapsed_ns = mach_time_to_nanoseconds(end_time - start_time);
-  fprintf(stderr, "[YSWIFT PERF] track_deinit(%s) took %llu ns\n", name, elapsed_ns);
 }
 
 } // namespace runtime_analysis
