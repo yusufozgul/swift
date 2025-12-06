@@ -93,7 +93,8 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
   } guard{all_classes};
 
   // Parallel filtering phase: find matching classes concurrently
-  __block std::atomic<size_t> match_count{0};
+  std::atomic<size_t> match_count_storage{0};
+  std::atomic<size_t>* match_count = &match_count_storage;
 
   // Pre-allocate array for matched classes (worst case: all classes match)
   const char** matched_classes = (const char**)calloc(class_count, sizeof(const char*));
@@ -118,7 +119,7 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
     if (imageName && strstr(imageName, _executableName) != nullptr) {
       const char* className = class_getName(cls);
       if (className) {
-        size_t index = match_count.fetch_add(1, std::memory_order_relaxed);
+        size_t index = match_count->fetch_add(1, std::memory_order_relaxed);
         if (index < TrackerData::TABLE_SIZE) {
           matched_classes[index] = className;
         }
@@ -127,7 +128,7 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
   });
 
   // Sequential write phase: populate tracker entries
-  size_t final_count = std::min(match_count.load(), (size_t)TrackerData::TABLE_SIZE);
+  size_t final_count = std::min(match_count->load(), (size_t)TrackerData::TABLE_SIZE);
   for (size_t i = 0; i < final_count; i++) {
     auto& entry = tracker->entries[i];
     snprintf(entry.name, sizeof(entry.name), "%s", matched_classes[i]);
