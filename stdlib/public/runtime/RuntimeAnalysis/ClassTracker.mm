@@ -58,6 +58,7 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
 }
 
 void ClassTracker::track_init(const HeapObject* object) {
+  fprintf(stderr, "[YSWIFT] track_init");
   if (!object) return;
   
   auto tracker = g_tracker.load(std::memory_order_acquire);
