@@ -13,6 +13,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <string>
+#include <string_view>
 #include <cstdio>
 #include <dispatch/dispatch.h>
 
@@ -20,7 +21,7 @@ namespace swift {
 namespace runtime_analysis {
 
 std::atomic<TrackerData*> g_tracker{nullptr};
-static std::unordered_map<std::string, size_t>* g_class_index_cache = nullptr;
+static std::unordered_map<std::string_view, size_t>* g_class_index_cache = nullptr;
 
 // Helper: Get class name and find index in cache
 // Returns SIZE_MAX if not found
@@ -41,15 +42,15 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
   if (!tracker) return;
 
   if (!g_class_index_cache) {
-    g_class_index_cache = new std::unordered_map<std::string, size_t>();
-    g_class_index_cache->reserve(50000);
+    g_class_index_cache = new std::unordered_map<std::string_view, size_t>();
+    g_class_index_cache->reserve(20000);
   }
 
   size_t count = 0;
   for (size_t i = 0; i < TrackerData::TABLE_SIZE; ++i) {
     const char* name = tracker->entries[i].name;
     if (name[0] != '\0') {
-      (*g_class_index_cache)[std::string(name)] = i;
+      (*g_class_index_cache)[std::string_view(name)] = i;
       count++;
     }
   }
@@ -59,9 +60,6 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
 
 void ClassTracker::track_init(const HeapObject* object) {
   if (!object) return;
-  
-  auto tracker = g_tracker.load(std::memory_order_acquire);
-  if (!tracker) return;
 
   const HeapMetadata *metadata = object->metadata;
   if (!metadata || metadata->getKind() != MetadataKind::Class) {
@@ -73,15 +71,15 @@ void ClassTracker::track_init(const HeapObject* object) {
 
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
+  
+  auto tracker = g_tracker.load(std::memory_order_acquire);
+  if (!tracker) return;
 
   tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
   if (!object) return;
-  
-  auto tracker = g_tracker.load(std::memory_order_acquire);
-  if (!tracker) return;
 
   const HeapMetadata *metadata = object->metadata;
   if (!metadata || metadata->getKind() != MetadataKind::Class) {
@@ -93,6 +91,9 @@ void ClassTracker::track_deinit(const HeapObject* object) {
 
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
+  
+  auto tracker = g_tracker.load(std::memory_order_acquire);
+  if (!tracker) return;
 
   tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed);
 }
