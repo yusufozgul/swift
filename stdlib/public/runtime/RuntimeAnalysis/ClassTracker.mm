@@ -125,14 +125,20 @@ static void auto_initialize_class_tracker() {
     return;
   }
 
+  os_log_info(log, "[YSWIFT] Shared memory created");
+
   auto* tracker = static_cast<swift::runtime_analysis::TrackerData*>(mem);
   bool already_populated = swift::runtime_analysis::ClassDiscovery::discover_and_populate(tracker);
 
+  os_log_info(log, "[YSWIFT] Class discovery population result: %d", already_populated);
+
   if (already_populated) {
+    os_log_info(log, "[YSWIFT] Class tracking already populated");
     swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
     swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
     os_log_info(log, "[YSWIFT] Class tracking initialized");
   } else {
+    os_log_info(log, "[YSWIFT] Class tracking not populated, discovering classes");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                    dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
       swift::runtime_analysis::ClassDiscovery::discover_class_list(tracker);
