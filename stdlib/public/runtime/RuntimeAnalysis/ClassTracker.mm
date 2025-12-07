@@ -16,9 +16,16 @@
 #include <string_view>
 #include <cstdio>
 #include <dispatch/dispatch.h>
+#include <os/log.h>
 
 namespace swift {
 namespace runtime_analysis {
+
+// Logging subsystem
+static os_log_t get_runtime_log() {
+  static os_log_t log = os_log_create("com.swift.runtime", "ClassTracker");
+  return log;
+}
 
 std::atomic<TrackerData*> g_tracker{nullptr};
 static std::unordered_map<std::string_view, size_t>* g_class_index_cache = nullptr;
@@ -55,7 +62,7 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
     }
   }
   
-  fprintf(stderr, "[YSWIFT] build index cache with %zu classes\n", count);
+  os_log_info(get_runtime_log(), "[YSWIFT] Build index cache with %zu classes", count);
 }
 
 void ClassTracker::track_init(const HeapObject* object) {
@@ -103,16 +110,18 @@ void ClassTracker::track_deinit(const HeapObject* object) {
 
 __attribute__((constructor))
 static void auto_initialize_class_tracker() {
-  fprintf(stderr, "[YSWIFT] Initialize Runtime Analyzer");
+  static os_log_t log = os_log_create("com.swift.runtime", "ClassTracker");
+  
+  os_log_info(log, "[YSWIFT] Initialize Runtime Analyzer");
 
   static const char* env = getenv("SWIFT_CLASS_TRACKING");
   if (!env || env[0] != '1') return;
 
-  fprintf(stderr, "[YSWIFT] Loading Runtime Analyzer");
+  os_log_info(log, "[YSWIFT] Loading Runtime Analyzer");
 
   void* mem = swift::runtime_analysis::SharedMemory::get_or_create("/swift_class_tracker", sizeof(swift::runtime_analysis::TrackerData));
   if (!mem) {
-    fprintf(stderr, "[YSWIFT] ERROR: failed to get shared memory\n");
+    os_log_error(log, "[YSWIFT] ERROR: failed to get shared memory");
     return;
   }
 
@@ -122,7 +131,7 @@ static void auto_initialize_class_tracker() {
   if (already_populated) {
     swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
     swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
-    fprintf(stderr, "[YSWIFT] Class tracking initialized\n");
+    os_log_info(log, "[YSWIFT] Class tracking initialized");
   } else {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                    dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
@@ -130,7 +139,7 @@ static void auto_initialize_class_tracker() {
       swift::runtime_analysis::ClassTracker::build_index_cache(tracker);
       swift::runtime_analysis::g_tracker.store(tracker, std::memory_order_release);
 
-      fprintf(stderr, "[YSWIFT] Class tracking initialized\n");
+      os_log_info(log, "[YSWIFT] Class tracking initialized");
     });
   }
 }

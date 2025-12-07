@@ -13,9 +13,16 @@
 #include <semaphore.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <os/log.h>
 
 namespace swift {
 namespace runtime_analysis {
+
+// Logging subsystem
+static os_log_t get_discovery_log() {
+  static os_log_t log = os_log_create("com.swift.runtime", "ClassDiscovery");
+  return log;
+}
 
 // RAII wrapper for cross-process discovery lock
 class DiscoveryLock {
@@ -28,7 +35,7 @@ public:
     lock_ = sem_open(sem_name, O_CREAT, 0644, 1);
 
     if (lock_ == SEM_FAILED) {
-      fprintf(stderr, "[YSWIFT] ERROR: failed to open discovery semaphore (errno=%d)\n", errno);
+      os_log_error(get_discovery_log(), "[YSWIFT] ERROR: failed to open discovery semaphore (errno=%d)", errno);
       return;
     }
 
@@ -68,7 +75,7 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
   uint32_t size = sizeof(executablePathBuf);
 
   if (_NSGetExecutablePath(executablePathBuf, &size) != 0) {
-    fprintf(stderr, "[YSWIFT] ERROR: failed to get executable path\n");
+    os_log_error(get_discovery_log(), "[YSWIFT] ERROR: failed to get executable path");
     return;
   }
 
@@ -82,7 +89,7 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
   Class *all_classes = objc_copyClassList(&class_count);
 
   if (!all_classes) {
-    fprintf(stderr, "[YSWIFT] ERROR: objc_copyClassList failed\n");
+    os_log_error(get_discovery_log(), "[YSWIFT] ERROR: objc_copyClassList failed");
     return;
   }
 
@@ -99,7 +106,7 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
   // Pre-allocate array for matched classes (worst case: all classes match)
   const char** matched_classes = (const char**)calloc(class_count, sizeof(const char*));
   if (!matched_classes) {
-    fprintf(stderr, "[YSWIFT] ERROR: failed to allocate matched_classes array\n");
+    os_log_error(get_discovery_log(), "[YSWIFT] ERROR: failed to allocate matched_classes array");
     return;
   }
 
@@ -135,7 +142,7 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
     entry.init_count.store(0, std::memory_order_relaxed);
     entry.deinit_count.store(0, std::memory_order_relaxed);
   }
-  fprintf(stderr, "[YSWIFT] Discovered %zu classes\n", final_count);
+  os_log_info(get_discovery_log(), "[YSWIFT] Discovered %zu classes", final_count);
 }
 
 bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {
