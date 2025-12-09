@@ -15,7 +15,6 @@
 #include <string>
 #include <string_view>
 #include <cstdio>
-#include <chrono>
 #include <dispatch/dispatch.h>
 #include <os/log.h>
 
@@ -67,8 +66,6 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
 }
 
 void ClassTracker::track_init(const HeapObject* object) {
-  auto start = std::chrono::high_resolution_clock::now();
-
   if (!object) return;
 
   const HeapMetadata *metadata = object->metadata;
@@ -86,20 +83,9 @@ void ClassTracker::track_init(const HeapObject* object) {
   if (!tracker) return;
 
   tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed);
-
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-
-  // Log every 10000th call to avoid log spam
-  static std::atomic<uint64_t> call_counter{0};
-  if (call_counter.fetch_add(1, std::memory_order_relaxed) % 10000 == 0) {
-    os_log_info(get_runtime_log(), "[YSWIFT] track_init duration: %lld ns", duration);
-  }
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
-  auto start = std::chrono::high_resolution_clock::now();
-
   if (!object) return;
 
   const HeapMetadata *metadata = object->metadata;
@@ -117,15 +103,6 @@ void ClassTracker::track_deinit(const HeapObject* object) {
   if (!tracker) return;
 
   tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed);
-
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-
-  // Log every 10000th call to avoid log spam
-  static std::atomic<uint64_t> call_counter{0};
-  if (call_counter.fetch_add(1, std::memory_order_relaxed) % 10000 == 0) {
-    os_log_info(get_runtime_log(), "[YSWIFT] track_deinit duration: %lld ns", duration);
-  }
 }
 
 } // namespace runtime_analysis
