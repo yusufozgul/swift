@@ -73,7 +73,7 @@ void ClassTracker::track_init(const HeapObject* object) {
     return;
   }
 
-  auto mangledName = swift_getMangledTypeName(metadata);
+  auto mangledName = ::swift_getMangledTypeName(metadata);
   const char* name = mangledName.data;
 
   size_t idx = get_class_index(name);
@@ -93,7 +93,7 @@ void ClassTracker::track_deinit(const HeapObject* object) {
     return;
   }
 
-  auto mangledName = swift_getMangledTypeName(metadata);
+  auto mangledName = ::swift_getMangledTypeName(metadata);
   const char* name = mangledName.data;
 
   size_t idx = get_class_index(name);
