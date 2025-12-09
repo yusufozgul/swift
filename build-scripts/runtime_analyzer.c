@@ -61,7 +61,7 @@ int exportClassesToCSV(const char* outputPath) {
     }
 
     // Write CSV header
-    fprintf(csvFile, "ClassName,InitCount,DeinitCount,ActiveInstances\n");
+    fprintf(csvFile, "ClassName,MangledName,InitCount,DeinitCount,ActiveInstances\n");
 
     // Read and write class entries
     uint32_t classCount = 0;
@@ -71,12 +71,13 @@ int exportClassesToCSV(const char* outputPath) {
         // Skip empty entries
         if (className[0] == '\0') continue;
 
+        const char* mangledName = tracker->entries[i].mangled_name;
         uint64_t initCount = tracker->entries[i].init_count;
         uint64_t deinitCount = tracker->entries[i].deinit_count;
         int64_t activeInstances = (int64_t)initCount - (int64_t)deinitCount;
 
-        fprintf(csvFile, "%s,%llu,%llu,%lld\n",
-                className, initCount, deinitCount, activeInstances);
+        fprintf(csvFile, "%s,%s,%llu,%llu,%lld\n",
+                className, mangledName, initCount, deinitCount, activeInstances);
         classCount++;
     }
 
@@ -100,7 +101,7 @@ int populateFromBinary(const char* binaryPath) {
         return 1;
     }
 
-    // Extract class names
+    // Extract class names using otool (will convert to runtime format later)
     char cmd[1024];
     snprintf(cmd, sizeof(cmd),
         "otool -oV '%s' 2>/dev/null | "
@@ -110,18 +111,19 @@ int populateFromBinary(const char* binaryPath) {
         "sort -u",
         absolutePath);
 
+    char** mangled_swift = malloc(TABLE_SIZE * sizeof(char*));
+    char** mangled_objc = malloc(TABLE_SIZE * sizeof(char*));
+    int swift_count = 0;
+    int objc_count = 0;
+
+    char line[512];
+
     FILE* otool_pipe = popen(cmd, "r");
     if (!otool_pipe) {
         fprintf(stderr, "Error: Failed to run otool\n");
         return 1;
     }
 
-    char** mangled_swift = malloc(TABLE_SIZE * sizeof(char*));
-    char** mangled_objc = malloc(TABLE_SIZE * sizeof(char*));
-    int swift_count = 0;
-    int objc_count = 0;
-
-    char line[256];
     while (fgets(line, sizeof(line), otool_pipe)) {
         line[strcspn(line, "\n")] = 0;
         if (strncmp(line, "_Tt", 3) == 0 && swift_count < TABLE_SIZE) {
@@ -136,45 +138,59 @@ int populateFromBinary(const char* binaryPath) {
 
     // Demangle Swift classes
     char** demangled_swift = malloc(TABLE_SIZE * sizeof(char*));
+    char** runtime_mangled = malloc(TABLE_SIZE * sizeof(char*));
     int demangled_count = 0;
 
     if (swift_count > 0) {
-        printf("Demangling Swift classes...\n");
-        FILE* tmp = fopen("/tmp/mangled_swift.txt", "w");
-        if (!tmp) return 1;
-
-        for (int i = 0; i < swift_count; i++) {
-            fprintf(tmp, "%s\n", mangled_swift[i]);
+        FILE* tmp = fopen("/tmp/mangled.txt", "w");
+        if (!tmp) {
+            fprintf(stderr, "Error: Failed to create temp file\n");
+            return 1;
         }
+        for (int i = 0; i < swift_count; i++) fprintf(tmp, "%s\n", mangled_swift[i]);
         fclose(tmp);
 
-        system("xcrun swift-demangle < /tmp/mangled_swift.txt > /tmp/demangled_swift.txt 2>/dev/null");
-
-        FILE* result = fopen("/tmp/demangled_swift.txt", "r");
-        if (result) {
-            while (fgets(line, sizeof(line), result) && demangled_count < TABLE_SIZE) {
-                line[strcspn(line, "\n")] = 0;
-                if (strlen(line) > 0) {
-                    // Remove "(TypeName in _HASH)" -> "TypeName"
-                    char* p = line;
-                    while ((p = strstr(p, " in _")) != NULL) {
-                        char* end = strchr(p, ')');
-                        char* start = p;
-                        while (start > line && *start != '(') start--;
-                        if (*start == '(' && end) {
-                            memmove(start, start + 1, p - start - 1);
-                            memmove(start + (p - start - 1), end + 1, strlen(end + 1) + 1);
-                        } else {
-                            p++;
-                        }
-                    }
-                    demangled_swift[demangled_count++] = strdup(line);
-                }
-            }
-            fclose(result);
+        // Demangle and remangle
+        if (system("xcrun swift-demangle < /tmp/mangled.txt > /tmp/demangled.txt 2>/dev/null") != 0 ||
+            system("xcrun swift-demangle --remangle-new < /tmp/mangled.txt > /tmp/remangled.txt 2>/dev/null") != 0) {
+            fprintf(stderr, "Error: swift-demangle failed\n");
+            unlink("/tmp/mangled.txt");
+            return 1;
         }
-        unlink("/tmp/mangled_swift.txt");
-        unlink("/tmp/demangled_swift.txt");
+
+        FILE* f_demangled = fopen("/tmp/demangled.txt", "r");
+        FILE* f_remangled = fopen("/tmp/remangled.txt", "r");
+        if (!f_demangled || !f_remangled) {
+            fprintf(stderr, "Error: Failed to open demangle results\n");
+            if (f_demangled) fclose(f_demangled);
+            if (f_remangled) fclose(f_remangled);
+            return 1;
+        }
+
+        char d_line[512], r_line[512];
+        while (fgets(d_line, sizeof(d_line), f_demangled) &&
+               fgets(r_line, sizeof(r_line), f_remangled) &&
+               demangled_count < TABLE_SIZE) {
+            d_line[strcspn(d_line, "\n")] = 0;
+            r_line[strcspn(r_line, "\n")] = 0;
+            if (!strlen(d_line) || !strlen(r_line)) continue;
+
+            // Strip symbolic reference prefix ($s) and descriptor suffix (D)
+            char* mangled = r_line;
+            if (mangled[0] == '$' && mangled[1] == 's') mangled += 2;  // Strip $s
+            size_t len = strlen(mangled);
+            if (len > 0 && mangled[len - 1] == 'D') mangled[len - 1] = '\0';  // Strip D
+
+            demangled_swift[demangled_count] = strdup(d_line);
+            runtime_mangled[demangled_count] = strdup(mangled);
+            demangled_count++;
+        }
+
+        fclose(f_demangled);
+        fclose(f_remangled);
+        unlink("/tmp/mangled.txt");
+        unlink("/tmp/demangled.txt");
+        unlink("/tmp/remangled.txt");
     }
 
     // Create shared memory
@@ -192,18 +208,12 @@ int populateFromBinary(const char* binaryPath) {
     // Populate entries
     size_t index = 0;
     for (int i = 0; i < demangled_count && index < TABLE_SIZE; i++, index++) {
-        strncpy(tracker->entries[index].name, demangled_swift[i], MAX_CLASS_NAME - 1);
-        tracker->entries[index].name[MAX_CLASS_NAME - 1] = '\0';
-
-        strncpy(tracker->entries[index].mangled_name, mangled_swift[i], MAX_MANGLED_NAME - 1);
-        tracker->entries[index].mangled_name[MAX_MANGLED_NAME - 1] = '\0';
+        snprintf(tracker->entries[index].name, MAX_CLASS_NAME, "%s", demangled_swift[i]);
+        snprintf(tracker->entries[index].mangled_name, MAX_MANGLED_NAME, "%s", runtime_mangled[i]);
     }
     for (int i = 0; i < objc_count && index < TABLE_SIZE; i++, index++) {
-        strncpy(tracker->entries[index].name, mangled_objc[i], MAX_CLASS_NAME - 1);
-        tracker->entries[index].name[MAX_CLASS_NAME - 1] = '\0';
-
-        strncpy(tracker->entries[index].mangled_name, mangled_objc[i], MAX_MANGLED_NAME - 1);
-        tracker->entries[index].mangled_name[MAX_MANGLED_NAME - 1] = '\0';
+        snprintf(tracker->entries[index].name, MAX_CLASS_NAME, "%s", mangled_objc[i]);
+        snprintf(tracker->entries[index].mangled_name, MAX_MANGLED_NAME, "%s", mangled_objc[i]);
     }
 
     munmap(tracker, sizeof(TrackerData));
@@ -212,10 +222,14 @@ int populateFromBinary(const char* binaryPath) {
     // Cleanup
     for (int i = 0; i < swift_count; i++) free(mangled_swift[i]);
     for (int i = 0; i < objc_count; i++) free(mangled_objc[i]);
-    for (int i = 0; i < demangled_count; i++) free(demangled_swift[i]);
+    for (int i = 0; i < demangled_count; i++) {
+        free(demangled_swift[i]);
+        free(runtime_mangled[i]);
+    }
     free(mangled_swift);
     free(mangled_objc);
     free(demangled_swift);
+    free(runtime_mangled);
 
     printf("Populated %zu classes\n", index);
     return 0;
