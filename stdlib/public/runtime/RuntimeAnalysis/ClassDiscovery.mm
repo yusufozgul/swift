@@ -6,6 +6,7 @@
 
 #include "ClassDiscovery.h"
 #include "ClassTracker.h"
+#include "swift/Runtime/Metadata.h"
 #include <objc/runtime.h>
 #include <mach-o/dyld.h>
 #include <cstring>
@@ -138,11 +139,30 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
   size_t final_count = std::min(match_count->load(), (size_t)TrackerData::TABLE_SIZE);
   for (size_t i = 0; i < final_count; i++) {
     auto& entry = tracker->entries[i];
-    snprintf(entry.name, sizeof(entry.name), "%s", matched_classes[i]);
+    const char* className = matched_classes[i];
+
+    // Get metadata from class name
+    const ClassMetadata* metadata = reinterpret_cast<const ClassMetadata*>(
+        objc_getClass(className));
+
+    if (metadata) {
+      // Get mangled name for fast lookups
+      auto mangledName = swift::swift_getMangledTypeName(metadata);
+      snprintf(entry.mangled_name, sizeof(entry.mangled_name), "%s", mangledName.data);
+
+      // Get demangled name for readability
+      auto demangledName = swift::swift_getTypeName(metadata, true);
+      snprintf(entry.name, sizeof(entry.name), "%s", demangledName.data);
+    } else {
+      // Fallback: use className for both
+      snprintf(entry.name, sizeof(entry.name), "%s", className);
+      snprintf(entry.mangled_name, sizeof(entry.mangled_name), "%s", className);
+    }
+
     entry.init_count.store(0, std::memory_order_relaxed);
     entry.deinit_count.store(0, std::memory_order_relaxed);
   }
-  os_log_info(get_discovery_log(), "[YSWIFT] Discovered %zu classes", final_count);
+  os_log_info(get_discovery_log(), "[YSWIFT] Discovered %zu classes (with mangled names)", final_count);
 }
 
 bool ClassDiscovery::discover_and_populate(TrackerData* tracker) {

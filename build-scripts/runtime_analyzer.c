@@ -15,12 +15,14 @@
 // Constants matching ClassTracker.mm
 #define TABLE_SIZE 16384
 #define MAX_CLASS_NAME 128
+#define MAX_MANGLED_NAME 256
 
 // Structure matching ClassTracker.mm
 typedef struct {
     uint64_t init_count;
     uint64_t deinit_count;
     char name[MAX_CLASS_NAME];
+    char mangled_name[MAX_MANGLED_NAME];
 } ClassEntry;
 
 typedef struct {
@@ -192,10 +194,16 @@ int populateFromBinary(const char* binaryPath) {
     for (int i = 0; i < demangled_count && index < TABLE_SIZE; i++, index++) {
         strncpy(tracker->entries[index].name, demangled_swift[i], MAX_CLASS_NAME - 1);
         tracker->entries[index].name[MAX_CLASS_NAME - 1] = '\0';
+
+        strncpy(tracker->entries[index].mangled_name, mangled_swift[i], MAX_MANGLED_NAME - 1);
+        tracker->entries[index].mangled_name[MAX_MANGLED_NAME - 1] = '\0';
     }
     for (int i = 0; i < objc_count && index < TABLE_SIZE; i++, index++) {
         strncpy(tracker->entries[index].name, mangled_objc[i], MAX_CLASS_NAME - 1);
         tracker->entries[index].name[MAX_CLASS_NAME - 1] = '\0';
+
+        strncpy(tracker->entries[index].mangled_name, mangled_objc[i], MAX_MANGLED_NAME - 1);
+        tracker->entries[index].mangled_name[MAX_MANGLED_NAME - 1] = '\0';
     }
 
     munmap(tracker, sizeof(TrackerData));

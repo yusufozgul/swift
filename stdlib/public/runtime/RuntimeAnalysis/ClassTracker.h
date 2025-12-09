@@ -22,6 +22,7 @@ struct ClassEntry {
   std::atomic<uint64_t> init_count;
   std::atomic<uint64_t> deinit_count;
   char name[128];
+  char mangled_name[256];
 };
 
 // Shared data structure

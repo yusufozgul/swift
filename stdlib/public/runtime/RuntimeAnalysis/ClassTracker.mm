@@ -55,14 +55,14 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
 
   size_t count = 0;
   for (size_t i = 0; i < TrackerData::TABLE_SIZE; ++i) {
-    const char* name = tracker->entries[i].name;
-    if (name[0] != '\0') {
-      (*g_class_index_cache)[std::string_view(name)] = i;
+    const char* mangled_name = tracker->entries[i].mangled_name;
+    if (mangled_name[0] != '\0') {
+      (*g_class_index_cache)[std::string_view(mangled_name)] = i;
       count++;
     }
   }
-  
-  os_log_info(get_runtime_log(), "[YSWIFT] Build index cache with %zu classes", count);
+
+  os_log_info(get_runtime_log(), "[YSWIFT] Build index cache with %zu classes (using mangled names)", count);
 }
 
 void ClassTracker::track_init(const HeapObject* object) {
@@ -73,12 +73,12 @@ void ClassTracker::track_init(const HeapObject* object) {
     return;
   }
 
-  auto typeName = swift::swift_getTypeName(metadata, true);
-  const char* name = typeName.data;
+  auto mangledName = swift::swift_getMangledTypeName(metadata);
+  const char* name = mangledName.data;
 
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
-  
+
   auto tracker = g_tracker.load(std::memory_order_acquire);
   if (!tracker) return;
 
@@ -93,12 +93,12 @@ void ClassTracker::track_deinit(const HeapObject* object) {
     return;
   }
 
-  auto typeName = swift::swift_getTypeName(metadata, true);
-  const char* name = typeName.data;
+  auto mangledName = swift::swift_getMangledTypeName(metadata);
+  const char* name = mangledName.data;
 
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
-  
+
   auto tracker = g_tracker.load(std::memory_order_acquire);
   if (!tracker) return;
 
