@@ -148,11 +148,11 @@ void ClassDiscovery::discover_class_list(TrackerData* tracker) {
 
     if (metadata) {
       // Get mangled name for fast lookups
-      auto mangledName = ::swift_getMangledTypeName(metadata);
+      auto mangledName = swift_getMangledTypeName(metadata);
       snprintf(entry.mangled_name, sizeof(entry.mangled_name), "%s", mangledName.data);
 
       // Get demangled name for readability
-      auto demangledName = ::swift_getTypeName(metadata, true);
+      auto demangledName = swift_getTypeName(metadata, true);
       snprintf(entry.name, sizeof(entry.name), "%s", demangledName.data);
     } else {
       // Fallback: use className for both
