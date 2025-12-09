@@ -66,6 +66,7 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
 }
 
 void ClassTracker::track_init(const HeapObject* object) {
+  return;
   if (!object) return;
 
   const HeapMetadata *metadata = object->metadata;
@@ -88,6 +89,7 @@ void ClassTracker::track_init(const HeapObject* object) {
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
+  return;
   if (!object) return;
 
   const HeapMetadata *metadata = object->metadata;
@@ -112,6 +114,7 @@ void ClassTracker::track_deinit(const HeapObject* object) {
 
 __attribute__((constructor))
 static void auto_initialize_class_tracker() {
+  return;
   static os_log_t log = os_log_create("com.swift.runtime", "ClassTracker");
   
   os_log_info(log, "[YSWIFT] Initialize Runtime Analyzer");
