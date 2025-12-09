@@ -79,10 +79,12 @@ void ClassTracker::track_init(const HeapObject* object) {
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
 
-  auto tracker = g_tracker.load(std::memory_order_acquire);
-  if (!tracker) return;
+  os_log_info(get_runtime_log(), "[YSWIFT] init: %s", name);
 
-  tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed);
+  //auto tracker = g_tracker.load(std::memory_order_acquire);
+  //if (!tracker) return;
+
+  //tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
@@ -99,10 +101,12 @@ void ClassTracker::track_deinit(const HeapObject* object) {
   size_t idx = get_class_index(name);
   if (idx == SIZE_MAX) return;
 
-  auto tracker = g_tracker.load(std::memory_order_acquire);
-  if (!tracker) return;
+  os_log_info(get_runtime_log(), "[YSWIFT] deinit: %s", name);
 
-  tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed);
+  //auto tracker = g_tracker.load(std::memory_order_acquire);
+  //if (!tracker) return;
+
+  //tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 } // namespace runtime_analysis
