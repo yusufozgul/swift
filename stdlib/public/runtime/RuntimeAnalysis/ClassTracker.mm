@@ -73,13 +73,13 @@ void ClassTracker::track_init(const HeapObject* object) {
     return;
   }
 
-  auto mangledName = swift_getMangledTypeName(metadata);
-  const char* name = mangledName.data;
+  os_log_info(get_runtime_log(), "[YSWIFT] init");
 
-  size_t idx = get_class_index(name);
-  if (idx == SIZE_MAX) return;
+  //auto mangledName = swift_getMangledTypeName(metadata);
+  //const char* name = mangledName.data;
 
-  os_log_info(get_runtime_log(), "[YSWIFT] init: %s", name);
+  //size_t idx = get_class_index(name);
+  //if (idx == SIZE_MAX) return;
 
   //auto tracker = g_tracker.load(std::memory_order_acquire);
   //if (!tracker) return;
@@ -95,13 +95,11 @@ void ClassTracker::track_deinit(const HeapObject* object) {
     return;
   }
 
-  auto mangledName = swift_getMangledTypeName(metadata);
-  const char* name = mangledName.data;
+  //auto mangledName = swift_getMangledTypeName(metadata);
+  //const char* name = mangledName.data;
 
-  size_t idx = get_class_index(name);
-  if (idx == SIZE_MAX) return;
-
-  os_log_info(get_runtime_log(), "[YSWIFT] deinit: %s", name);
+  //size_t idx = get_class_index(name);
+  //if (idx == SIZE_MAX) return;
 
   //auto tracker = g_tracker.load(std::memory_order_acquire);
   //if (!tracker) return;
