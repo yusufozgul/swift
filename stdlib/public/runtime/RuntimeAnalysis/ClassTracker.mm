@@ -77,7 +77,10 @@ void ClassTracker::track_init(const HeapObject* object) {
   const char* name = mangledName.data;
 
   size_t idx = get_class_index(name);
-  if (idx == SIZE_MAX) return;
+  if (idx == SIZE_MAX) {
+    os_log_debug(get_runtime_log(), "[YSWIFT] Class not found in cache (init): %s", name);
+    return;
+  }
 
   auto tracker = g_tracker.load(std::memory_order_acquire);
   if (!tracker) return;
