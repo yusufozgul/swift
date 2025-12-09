@@ -66,7 +66,6 @@ void ClassTracker::build_index_cache(TrackerData* tracker) {
 }
 
 void ClassTracker::track_init(const HeapObject* object) {
-  return;
   if (!object) return;
 
   const HeapMetadata *metadata = object->metadata;
@@ -74,22 +73,19 @@ void ClassTracker::track_init(const HeapObject* object) {
     return;
   }
 
-  os_log_info(get_runtime_log(), "[YSWIFT] init");
+  auto mangledName = swift_getMangledTypeName(metadata);
+  const char* name = mangledName.data;
 
-  //auto mangledName = swift_getMangledTypeName(metadata);
-  //const char* name = mangledName.data;
+  size_t idx = get_class_index(name);
+  if (idx == SIZE_MAX) return;
 
-  //size_t idx = get_class_index(name);
-  //if (idx == SIZE_MAX) return;
+  auto tracker = g_tracker.load(std::memory_order_acquire);
+  if (!tracker) return;
 
-  //auto tracker = g_tracker.load(std::memory_order_acquire);
-  //if (!tracker) return;
-
-  //tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed);
+  tracker->entries[idx].init_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 void ClassTracker::track_deinit(const HeapObject* object) {
-  return;
   if (!object) return;
 
   const HeapMetadata *metadata = object->metadata;
@@ -97,16 +93,16 @@ void ClassTracker::track_deinit(const HeapObject* object) {
     return;
   }
 
-  //auto mangledName = swift_getMangledTypeName(metadata);
-  //const char* name = mangledName.data;
+  auto mangledName = swift_getMangledTypeName(metadata);
+  const char* name = mangledName.data;
 
-  //size_t idx = get_class_index(name);
-  //if (idx == SIZE_MAX) return;
+  size_t idx = get_class_index(name);
+  if (idx == SIZE_MAX) return;
 
-  //auto tracker = g_tracker.load(std::memory_order_acquire);
-  //if (!tracker) return;
+  auto tracker = g_tracker.load(std::memory_order_acquire);
+  if (!tracker) return;
 
-  //tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed);
+  tracker->entries[idx].deinit_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 } // namespace runtime_analysis
@@ -114,7 +110,6 @@ void ClassTracker::track_deinit(const HeapObject* object) {
 
 __attribute__((constructor))
 static void auto_initialize_class_tracker() {
-  return;
   static os_log_t log = os_log_create("com.swift.runtime", "ClassTracker");
   
   os_log_info(log, "[YSWIFT] Initialize Runtime Analyzer");
