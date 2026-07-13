@@ -7,10 +7,13 @@
 #include <atomic>
 #include <mutex>
 
+#include <cstring>
+
 #include <mach/mach_time.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 
+using namespace swift;
 using namespace swift::runtime_class_tracker;
 
 static constexpr size_t HEADER = 64;
@@ -84,8 +87,8 @@ static void track(const HeapObject *object, bool isInit) {
   *reinterpret_cast<uint64_t *>(eventSlot + 16) = isInit ? 1 : 0;
 
   const char *name = typeDescriptor->Name.get();
-  size_t len = __builtin_strnlen(name, EVENT_NAME_LEN - 1);
-  __builtin_memcpy(eventSlot + 24, name, len);
+  size_t len = strnlen(name, EVENT_NAME_LEN - 1);
+  memcpy(eventSlot + 24, name, len);
   eventSlot[24 + len] = '\0';
 }
 
