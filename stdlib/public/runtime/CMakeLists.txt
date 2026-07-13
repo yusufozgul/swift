@@ -28,7 +28,9 @@ set(swift_runtime_objc_sources
     SwiftObject.mm
     SwiftValue.mm
     ReflectionMirrorObjC.mm
-    ObjCRuntimeGetImageNameFromClass.mm)
+    ObjCRuntimeGetImageNameFromClass.mm
+    SwiftRuntimeClassTracker/ClassTracker.mm
+    SwiftRuntimeClassTracker/SharedMemory.mm)
 
 set(swift_runtime_sources
     ../CompatibilityOverride/CompatibilityOverride.cpp

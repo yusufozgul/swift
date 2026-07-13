@@ -1,15 +1,14 @@
 #ifndef SWIFT_RUNTIME_CLASS_TRACKER_SHARED_MEMORY_H
 #define SWIFT_RUNTIME_CLASS_TRACKER_SHARED_MEMORY_H
 
-#include <stddef.h>
-#include <stdint.h>
+#include <cstddef>
 
 namespace swift {
 namespace runtime_class_tracker {
 
 class SharedMemory {
 public:
-  static void* load();
+  static void *load(const char *name, size_t size, bool readonly = false);
 };
 
 } // namespace runtime_class_tracker

@@ -3,32 +3,30 @@
 
 #include "swift/ABI/Metadata.h"
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 
 namespace swift {
 
-// Forward declarations
 struct HeapObject;
 
 namespace runtime_class_tracker {
 
-struct ClassEntry {
-  std::atomic<uint64_t> init_count;
-  std::atomic<uint64_t> deinit_count;
-  char name[128];
-  char mangled_name[256];
+struct FilterEntry {
+  uintptr_t start;
+  uintptr_t end;
 };
 
-struct TrackerData {
-  static constexpr size_t TABLE_SIZE = 16384;
-  ClassEntry entries[TABLE_SIZE];
-};
+// Flat array in shared memory: [seq, ts, isInit, name(256 bytes)] per event
+static constexpr size_t EVENT_FIELDS = 3; // seq, ts, isInit
+static constexpr size_t EVENT_NAME_LEN = 256;
+static constexpr size_t EVENT_SIZE = EVENT_FIELDS * 8 + EVENT_NAME_LEN; // 280 bytes
+static constexpr size_t EVENT_CAPACITY = 1 << 20;
 
 class ClassTracker {
 public:
-  static void track_init(const HeapObject* object);
-  static void track_deinit(const HeapObject* object);
-
-  static void build_index_cache(TrackerData* tracker);
+  static void track_init(const HeapObject *object);
+  static void track_deinit(const HeapObject *object);
 };
 
 } // namespace runtime_class_tracker

@@ -2,27 +2,24 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <cstring>
-#include <cstdio>
-#include <cerrno>
 
 namespace swift {
 namespace runtime_class_tracker {
-    void* SharedMemory::load() {
-        int fd = shm_open("/swift_class_tracker", O_RDWR, 0666);
-        
-        if (fd == -1) {
-            return nullptr;
-        }
-        
-        void* addr = mmap(nullptr, sizeof(swift::runtime_class_tracker::TrackerData), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        close(fd);
 
-        if (addr == MAP_FAILED) {
-            return nullptr;
-        }
+void *SharedMemory::load(const char *name, size_t size, bool readonly) {
+  int fd = shm_open(name, readonly ? O_RDONLY : O_RDWR, 0);
+  if (fd == -1)
+    return nullptr;
 
-        return addr;
-    }
+  int prot = readonly ? PROT_READ : PROT_READ | PROT_WRITE;
+  void *addr = mmap(nullptr, size, prot, MAP_SHARED, fd, 0);
+  close(fd);
+
+  if (addr == MAP_FAILED)
+    return nullptr;
+
+  return addr;
+}
+
 } // namespace runtime_class_tracker
 } // namespace swift
