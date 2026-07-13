@@ -47,6 +47,7 @@
 # include <malloc_type_private.h>
 #endif
 #include "Leaks.h"
+#include "SwiftRuntimeClassTracker/ClassTracker.h"
 
 using namespace swift;
 
@@ -217,6 +218,8 @@ static HeapObject *_swift_allocObject_(HeapMetadata const *metadata,
 
   // If leak tracking is enabled, start tracking this object.
   SWIFT_LEAKS_START_TRACKING_OBJECT(object);
+
+  runtime_class_tracker::ClassTracker::track_init(object);
 
   SWIFT_RT_TRACK_INVOCATION(object, swift_allocObject);
 
@@ -908,6 +911,8 @@ static inline void swift_deallocObjectImpl(HeapObject *object,
 
   // If we are tracking leaks, stop tracking this object.
   SWIFT_LEAKS_STOP_TRACKING_OBJECT(object);
+
+  runtime_class_tracker::ClassTracker::track_deinit(object);
 
 
   // Drop the initial weak retain of the object.
